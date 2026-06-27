@@ -21,3 +21,9 @@ rgbkb/ec_snapshots/
 .tmp_versions/
 modules.order
 Module.symvers
+
+# qmake artifacts (integrations/openrgb-plugin/)
+*.so
+moc_*
+.qmake.stash
+integrations/openrgb-plugin/Makefile
