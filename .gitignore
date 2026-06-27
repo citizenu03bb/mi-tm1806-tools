@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+.DS_Store
+
+# personal config (only the example template is committed)
+hotkey/config.toml
+
+# diagnostic output dirs
+rgbkb/logs/
+rgbkb/ec_snapshots/

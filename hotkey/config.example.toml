@@ -1,0 +1,93 @@
+# mi-hotkey configuration reference — every action type, with examples.
+# Copy fragments into config.toml as needed.
+#
+# ─── ACTION TYPES ─────────────────────────────────────────────────────────────
+#
+#   { type = "noop" }
+#       Do nothing. (Default for any unbound edge.)
+#
+#   { type = "shell", cmd = "..." }
+#       Run a string via /bin/sh -c, as your user, with full session env
+#       (DISPLAY, WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS, XDG_RUNTIME_DIR).
+#       Use this for anything involving pipes, shell expansion, or simple
+#       app launches.
+#
+#   { type = "exec", argv = ["...", "..."] }
+#       Run argv directly (no shell parsing). Slightly safer than "shell" if
+#       arguments come from untrusted sources, but for personal use rarely
+#       needed.
+#
+#   { type = "key", code = "KEY_PROG1" }
+#       Inject a press+release of a kernel keycode via /dev/uinput. The
+#       virtual device shows up as "mi-hotkey" — bind these in your DE's
+#       keyboard settings GUI like any other media key. Requires python3-evdev.
+#       See the curated key list at the top of daemon.py for accepted codes.
+#
+#   { type = "key_down", code = "..." } / { type = "key_up", code = "..." }
+#       Half-actions, useful for hold-to-action style: bind key_down to press,
+#       key_up to release.
+#
+#   { type = "notify", title = "...", body = "...", timeout_ms = 1500 }
+#       Desktop notification via libnotify (notify-send). timeout_ms optional.
+#
+# Any edge can take a single action table (above) or a LIST of tables. List
+# actions run sequentially, in declaration order:
+#   press = [
+#     { type = "notify", title = "Saving" },
+#     { type = "shell", cmd = "/usr/local/bin/save-screenshot" },
+#   ]
+#
+# ─── EXAMPLES BY USE CASE ─────────────────────────────────────────────────────
+
+# 1. Simple shell command (any DE, X11 or Wayland)
+[m1]
+press = { type = "shell", cmd = "playerctl play-pause" }
+
+# 2. Volume control via PulseAudio/PipeWire
+[m2]
+press = { type = "shell", cmd = "pactl set-sink-volume @DEFAULT_SINK@ -5%" }
+[m3]
+press = { type = "shell", cmd = "pactl set-sink-volume @DEFAULT_SINK@ +5%" }
+
+# 3. Launch an app (sends to current display, falls back to default)
+[m4]
+press = { type = "shell", cmd = "gnome-terminal" }
+
+# 4. Inject a "media key" keysym for binding in GNOME/KDE keyboard settings
+[m5]
+press = { type = "key", code = "KEY_PROG1" }
+
+# 5. Multi-action: notify + run a script
+# [m1]
+# press = [
+#   { type = "notify", title = "Screenshot", body = "Capturing area" },
+#   { type = "shell",  cmd = "gnome-screenshot --area" },
+# ]
+
+# 6. Hold-to-action (push-to-talk style):
+# [m1]
+# press = { type = "shell", cmd = "pactl set-source-mute @DEFAULT_SOURCE@ false" }
+# release = { type = "shell", cmd = "pactl set-source-mute @DEFAULT_SOURCE@ true" }
+
+# 7. Window-manager actions via wmctrl (X11)
+# [m2]
+# press = { type = "shell", cmd = "wmctrl -k on" }   # show desktop
+
+# 8. Context-aware (delegate to your own wrapper that inspects active window)
+# [m3]
+# press = { type = "exec", argv = ["/home/pat/bin/macro3-context.sh"] }
+
+# 9. Fan key — log to a file in addition to notifying
+[fan]
+mode_a = [
+  { type = "notify", title = "Fan", body = "Boost mode" },
+  { type = "shell",  cmd = "echo \"$(date +%H:%M:%S) BOOST\" >> /home/pat/.fan-log" },
+]
+mode_b = [
+  { type = "notify", title = "Fan", body = "Normal mode" },
+  { type = "shell",  cmd = "echo \"$(date +%H:%M:%S) NORMAL\" >> /home/pat/.fan-log" },
+]
+
+# 10. Disable a key entirely (or leave the edge unset)
+# [m4]
+# press = { type = "noop" }

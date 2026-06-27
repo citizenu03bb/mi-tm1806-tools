@@ -1,0 +1,283 @@
+#!/bin/bash
+# rgbkb — keyboard backlight CLI for Xiaomi Mi Gaming Laptop (TIMI TM1806).
+#
+# Hardware: 4 independent zones
+#   bar      = hotkey bar         (LEDZ=04)
+#   kb-left  = keyboard left      (LEDZ=05)
+#   kb-mid   = keyboard middle    (LEDZ=06)
+#   kb-right = keyboard right     (LEDZ=07)
+#
+# 2026-05-10: paints WITHOUT requiring Fn+brightness, by setting the LEBR
+# field of FB00/0100 to current KBBR (read live from EMEM @ 0xFE708000+0x30D)
+# instead of the previously-hardcoded 0x05. The only time Fn is still needed
+# is to wake the panel from KBBR=5 (off); after that, every command works
+# silently with smooth transitions.
+#
+# Usage:
+#   sudo rgbkb solid      <color>                                # uniform
+#   sudo rgbkb breath     <color>          [--speed N]            # uniform animated
+#   sudo rgbkb wave       <color>          [--speed N]            # uniform animated
+#   sudo rgbkb colorful   <color1> <color2> [--speed N]           # two-color animated
+#   sudo rgbkb zone       <zone> <color>                          # one zone
+#   sudo rgbkb brightness <0..5>                                  # 0=max, 5=off
+#   sudo rgbkb status                                             # dump EC state
+#
+#   <zone>  = bar | kb-left | kb-mid | kb-right
+#   <color> = name (red, green, blue, yellow, cyan, magenta, white, orange,
+#                   purple, pink, off, black) or 6-hex RRGGBB
+#   <speed> = 0..2 (default 2 = fastest)
+
+set -u
+
+WSAA=/proc/acpi/call
+
+usage() {
+    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+}
+
+resolve_color() {
+    case "${1,,}" in
+        red)     echo "FF 00 00" ;;
+        green)   echo "00 FF 00" ;;
+        blue)    echo "00 00 FF" ;;
+        yellow)  echo "FF FF 00" ;;
+        cyan)    echo "00 FF FF" ;;
+        magenta) echo "FF 00 FF" ;;
+        white)   echo "FF FF FF" ;;
+        orange)  echo "FF 80 00" ;;
+        purple)  echo "80 00 FF" ;;
+        pink)    echo "FF 80 80" ;;
+        black|off) echo "00 00 00" ;;
+        *)
+            local h="${1#0x}"; h="${h//\#/}"
+            if [[ "$h" =~ ^[0-9a-fA-F]{6}$ ]]; then
+                echo "${h:0:2} ${h:2:2} ${h:4:2}"
+            else
+                echo "ERROR: unknown color: $1" >&2
+                return 1
+            fi
+            ;;
+    esac
+}
+
+resolve_zone() {
+    case "${1,,}" in
+        bar)      echo "04" ;;
+        kb-left)  echo "05" ;;
+        kb-mid)   echo "06" ;;
+        kb-right) echo "07" ;;
+        *) echo "ERROR: unknown zone: $1 (use bar|kb-left|kb-mid|kb-right)" >&2
+           return 1 ;;
+    esac
+}
+
+[ "$#" -lt 1 ] && usage
+[ "$(id -u)" -eq 0 ] || { echo "rgbkb: must run as root" >&2; exit 1; }
+
+CMD="$1"; shift
+
+LSPD=02
+
+ARGS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --speed)
+            shift
+            case "$1" in
+                0) LSPD=00 ;;
+                1) LSPD=01 ;;
+                2) LSPD=02 ;;
+                *) echo "rgbkb: invalid speed: $1 (must be 0/1/2)" >&2; exit 1 ;;
+            esac
+            shift ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+
+[ -e "$WSAA" ] || modprobe acpi_call
+
+# Read current KBBR live from EMEM via /dev/mem mmap. KBBR: 0=max, 5=off.
+read_kbbr() {
+    python3 -c "
+import mmap, os
+fd = os.open('/dev/mem', os.O_RDONLY)
+m = mmap.mmap(fd, 0x1000, mmap.MAP_SHARED, mmap.PROT_READ, offset=0xFE708000)
+print(m[0x30D])
+m.close(); os.close(fd)
+"
+}
+
+# Two-hex-digit current KBBR for direct embedding in WSAA buffer LEBR field.
+read_kbbr_hex() {
+    printf '%02X' "$(read_kbbr)"
+}
+
+# Bail out if panel is off — user must press Fn+brightness once to wake.
+require_panel_on() {
+    local k=$(read_kbbr)
+    if [ "$k" = "5" ]; then
+        echo "rgbkb: panel is OFF (KBBR=5). Press Fn+keyboard-brightness ONCE" >&2
+        echo "       to wake, then re-run. (Once awake, no further Fn presses needed.)" >&2
+        exit 1
+    fi
+}
+
+mk_buf() {
+    local b="0x$1,0x$2,0x$3,0x$4,0x$5,0x$6,0x$7,0x$8,0x$9,0x${10},0x${11},0x${12}"
+    for _ in $(seq 1 20); do b="$b,0x00"; done
+    echo "{$b}"
+}
+
+send() {
+    echo "$1" > "$WSAA"
+    tr -d '\0' < "$WSAA" > /dev/null
+}
+
+# Stage one C-register: DT2A=$1, R=$2, G=$3, B=$4
+stage_c() {
+    local dt2a="$1" r="$2" g="$3" b="$4"
+    send "\\_SB_.MIAP.WSAA 0x0 $(mk_buf 00 FB 01 01 $dt2a 02 00 00 $r $g $b 00)"
+}
+
+# Apply uniform mode: $1 = LETY (01=static, 02=breath, 03=wave, 04=colorful).
+# LEBR=current KBBR (no blank).
+#
+# The two-pass for non-static modes is the canonical protocol on this firmware,
+# verified empirically 2026-05-10 by test_a1_single_lety_sandwich.sh:
+# the painter only refreshes from C-registers under LETY=01. Once in animation
+# mode, it uses the last static-painted color, not the C-regs. So we paint
+# static first to update the panel from C-regs, then issue a second LightEffect
+# pass to switch to the animated mode. (DSDT confirms FB00/0100 reads only
+# LETY/LSPD/LEBR/LEDZ from the buffer — there's no per-mode color parameter.)
+#
+# C0Z is broadcast to all 4 zones under LETY=01. C1Z is the second color for
+# LETY=04 (COLORFUL). C2Z..C7Z are write-only mirrors the firmware doesn't read,
+# but we stage them to keep state predictable across mode changes.
+apply_uniform() {
+    local lety="$1" r1="$2" g1="$3" b1="$4" r2="${5:-}" g2="${6:-}" b2="${7:-}"
+    require_panel_on
+    local LEBR=$(read_kbbr_hex)
+
+    for dt2a in 01 02 03 04 05 06 07 08; do
+        if [ "$lety" = "04" ] && [ "$dt2a" = "02" ] && [ -n "$r2" ]; then
+            stage_c $dt2a $r2 $g2 $b2
+        else
+            stage_c $dt2a $r1 $g1 $b1
+        fi
+    done
+
+    # Always paint static first (LETY=01) so C-regs are consumed and the
+    # panel shows the new color. Then if a non-static mode was requested,
+    # switch the mode with a second LightEffect pass.
+    local ledz
+    for ledz in 04 05 06 07; do
+        send "\\_SB_.MIAP.WSAA 0x0 $(mk_buf 00 FB 00 01 $ledz 00 00 00 01 $LSPD $LEBR 00)"
+    done
+    if [ "$lety" != "01" ]; then
+        for ledz in 04 05 06 07; do
+            send "\\_SB_.MIAP.WSAA 0x0 $(mk_buf 00 FB 00 01 $ledz 00 00 00 $lety $LSPD $LEBR 00)"
+        done
+    fi
+}
+
+# Override one physical zone. The painter reads only C0Z under LETY=01
+# (verified 2026-05-10 by test_a2_ledz_creg_map.sh — staging 8 distinct colors
+# and firing LEDZ=04..07 produced 4 zones all showing C0Z's color, regardless
+# of LEDZ). So we stage just C0Z and fire LightEffect on the target LEDZ; the
+# painter snapshots C0Z into that zone's persistent paint, leaving the other
+# zones' last-painted color intact. zone-by-zone diversity comes from
+# repeating (stage C0Z, paint LEDZ=N) per zone.
+#
+# Switches the overall mode to LETY=01 (static), so if the panel was in an
+# animated mode it stops animating. Recommended workflow: solid → zone.
+apply_zone_override() {
+    local ledz="$1" r="$2" g="$3" b="$4"
+    require_panel_on
+    local LEBR=$(read_kbbr_hex)
+    stage_c 01 $r $g $b
+    send "\\_SB_.MIAP.WSAA 0x0 $(mk_buf 00 FB 00 01 $ledz 00 00 00 01 $LSPD $LEBR 00)"
+}
+
+read_field() {
+    echo "$1" > "$WSAA"
+    tr -d '\0' < "$WSAA"
+}
+
+case "$CMD" in
+    solid|static)
+        [ "${#ARGS[@]}" -eq 1 ] || usage
+        rgb=$(resolve_color "${ARGS[0]}") || exit 1
+        read R G B <<<"$rgb"
+        echo "rgbkb: solid #$R$G$B (uniform across all 4 zones)"
+        apply_uniform 01 $R $G $B
+        ;;
+
+    breath)
+        [ "${#ARGS[@]}" -eq 1 ] || usage
+        rgb=$(resolve_color "${ARGS[0]}") || exit 1
+        read R G B <<<"$rgb"
+        echo "rgbkb: breath #$R$G$B speed=$LSPD"
+        apply_uniform 02 $R $G $B
+        ;;
+
+    wave)
+        [ "${#ARGS[@]}" -eq 1 ] || usage
+        rgb=$(resolve_color "${ARGS[0]}") || exit 1
+        read R G B <<<"$rgb"
+        echo "rgbkb: wave #$R$G$B speed=$LSPD"
+        apply_uniform 03 $R $G $B
+        ;;
+
+    colorful)
+        [ "${#ARGS[@]}" -eq 2 ] || usage
+        rgb1=$(resolve_color "${ARGS[0]}") || exit 1
+        rgb2=$(resolve_color "${ARGS[1]}") || exit 1
+        read R1 G1 B1 <<<"$rgb1"
+        read R2 G2 B2 <<<"$rgb2"
+        echo "rgbkb: colorful #$R1$G1$B1 <-> #$R2$G2$B2 speed=$LSPD"
+        apply_uniform 04 $R1 $G1 $B1 $R2 $G2 $B2
+        ;;
+
+    zone)
+        [ "${#ARGS[@]}" -eq 2 ] || usage
+        ledz=$(resolve_zone "${ARGS[0]}") || exit 1
+        rgb=$(resolve_color "${ARGS[1]}") || exit 1
+        read R G B <<<"$rgb"
+        echo "rgbkb: zone ${ARGS[0]} (LEDZ=$ledz) -> #$R$G$B"
+        apply_zone_override $ledz $R $G $B
+        ;;
+
+    brightness)
+        [ "${#ARGS[@]}" -eq 1 ] || usage
+        case "${ARGS[0]}" in 0|1|2|3|4|5) LVL=${ARGS[0]} ;; *) echo "rgbkb: brightness must be 0..5 (0=max, 5=off)" >&2; exit 1 ;; esac
+        echo "rgbkb: brightness LEBR=$LVL (0=max, 5=off)"
+        send "\\_SB_.MIAP.WSAA 0x0 $(mk_buf 00 FB 00 01 01 00 00 00 01 02 0$LVL 00)"
+        ;;
+
+    status)
+        echo "rgbkb status:"
+        echo "  KBBR (EMEM /dev/mem) = $(read_kbbr)  (0=max, 5=off)"
+        echo "  KBBR (WSAA)          = $(read_field '\_SB_.PCI0.LPCB.EC0.KBBR')"
+        echo "  KBIT  = $(read_field '\_SB_.PCI0.LPCB.EC0.KBIT')"
+        echo "  KBBL  = $(read_field '\_SB_.PCI0.LPCB.EC0.KBBL')"
+        echo "  LETY  = $(read_field '\_SB_.PCI0.LPCB.EC0.LETY')"
+        echo "  LSPD  = $(read_field '\_SB_.PCI0.LPCB.EC0.LSPD')"
+        echo "  LEBR  = $(read_field '\_SB_.PCI0.LPCB.EC0.LEBR')"
+        echo "  LEDZ  = $(read_field '\_SB_.PCI0.LPCB.EC0.LEDZ')"
+        echo "  LCAM  = $(read_field '\_SB_.PCI0.LPCB.EC0.LCAM')"
+        if [ -d /sys/kernel/ec_mmio ]; then
+            echo "  ec_mmio module is loaded; can read C-registers."
+            for c in 0:b05 1:b08 2:b0b 3:b0e 4:b11 5:b14 6:b17 7:b1a; do
+                idx=${c%:*}; off=0x${c#*:}
+                echo "$off"       > /sys/kernel/ec_mmio/offset; r=$(cat /sys/kernel/ec_mmio/value)
+                echo "$((off+1))" > /sys/kernel/ec_mmio/offset; g=$(cat /sys/kernel/ec_mmio/value)
+                echo "$((off+2))" > /sys/kernel/ec_mmio/offset; b=$(cat /sys/kernel/ec_mmio/value)
+                printf "  C%dZ   = %s %s %s\n" "$idx" "$r" "$g" "$b"
+            done
+        fi
+        ;;
+
+    -h|--help|help) usage ;;
+    *) echo "rgbkb: unknown command: $CMD" >&2; usage ;;
+esac
