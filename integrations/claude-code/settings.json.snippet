@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/pat/Projects/mi-tm1806-tools/integrations/claude-code/keyboard-status.sh SessionStart"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/pat/Projects/mi-tm1806-tools/integrations/claude-code/keyboard-status.sh Notification"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/pat/Projects/mi-tm1806-tools/integrations/claude-code/keyboard-status.sh Stop"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/pat/Projects/mi-tm1806-tools/integrations/claude-code/keyboard-status.sh SessionEnd"
+          }
+        ]
+      }
+    ]
+  }
+}

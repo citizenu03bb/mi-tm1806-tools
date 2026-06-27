@@ -1,0 +1,20 @@
+# /etc/udev/rules.d/99-mi-tm1806-led.rules
+#
+# Grant the `plugdev` group write access to the mi-tm1806-led sysfs surface
+# so a non-root user (in plugdev) can drive the keyboard from a hook script
+# or a desktop applet without sudo.
+#
+# Apply: copy to /etc/udev/rules.d/, then `sudo udevadm control --reload`
+# and either `sudo udevadm trigger --subsystem-match=leds` or reload the
+# kernel module (`sudo rmmod mi_tm1806_led && sudo modprobe mi_tm1806_led`).
+
+# Per-zone LED classdevs.
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="mi_tm1806::*", \
+	RUN+="/bin/sh -c 'chgrp plugdev %S%p/brightness %S%p/multi_intensity 2>/dev/null; chmod g+w %S%p/brightness %S%p/multi_intensity 2>/dev/null'"
+
+# Global attributes on the WMI device (effect / speed / secondary_color /
+# panel_brightness). The sysfs attrs are created by our driver's probe, so
+# the udev `bind` action is what fires AFTER they exist — `add` fires too
+# early (driver hasn't bound yet, attrs don't exist, chmod silently fails).
+ACTION=="add|change|bind", SUBSYSTEM=="wmi", KERNEL=="E2A89D40-784F-4E91-BE22-AE373CDEA97A", \
+	RUN+="/bin/sh -c 'cd %S%p && chgrp plugdev effect speed secondary_color panel_brightness 2>/dev/null; chmod g+w effect speed secondary_color panel_brightness 2>/dev/null'"
