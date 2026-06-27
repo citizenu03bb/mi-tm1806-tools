@@ -19,6 +19,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 RGBKB = str(SCRIPT_DIR / ".." / "rgbkb" / "rgbkb")
 
+# Sysfs paths for the kernel driver (no subprocesses, no /proc/acpi/call)
+LED_PREFIX  = "/sys/class/leds/mi_tm1806::kbd_"
+WMI_DEV     = "/sys/bus/wmi/devices/E2A89D40-784F-4E91-BE22-AE373CDEA97A"
+ZONES       = ["bar", "left", "mid", "right"]
+
 SAMPLE_RATE = 44100
 CHUNK_MS    = 40
 CHUNK       = SAMPLE_RATE * CHUNK_MS // 1000
@@ -54,17 +59,31 @@ MONITOR = get_monitor()
 
 # ── helpers ──────────────────────────────────────────────────────
 
-def shell(*args):
-    subprocess.run(list(args), capture_output=True, timeout=5)
+def sysfs(path, value):
+    """Write a string to a sysfs file — no subprocess, no ACPI until commit."""
+    try:
+        with open(path, "w") as f:
+            f.write(str(value))
+    except OSError:
+        pass
 
-def paint_zone(zone, r, g, b):
-    shell("sudo", RGBKB, "zone", zone, f"0x{r:02X}{g:02X}{b:02X}")
+def paint_zone(idx, r, g, b):
+    """Store colour for one zone via sysfs (no EC call)."""
+    sysfs(f"{LED_PREFIX}{ZONES[idx]}/multi_intensity", f"{r} {g} {b}")
+    sysfs(f"{LED_PREFIX}{ZONES[idx]}/brightness", "255")
 
 def paint_uniform(r, g, b):
-    shell("sudo", RGBKB, "solid", f"0x{r:02X}{g:02X}{b:02X}")
+    """Store the same colour on all 4 zones."""
+    for idx in range(4):
+        paint_zone(idx, r, g, b)
+
+def commit():
+    """Batch-paint all stored zone colours to the EC in one ACPI call."""
+    sysfs(f"{WMI_DEV}/commit", "1")
 
 def cleanup(sig=None, frame=None):
     paint_uniform(0, 255, 0)
+    commit()
     print("\n  Restored to green.")
     sys.exit(0)
 
@@ -140,6 +159,8 @@ def throttle(last):
 # ── modes ─────────────────────────────────────────────────────────
 
 def mode_pulse():
+    sysfs(f"{WMI_DEV}/effect", "1")
+    sysfs(f"{WMI_DEV}/speed", "2")
     print(f"  MODE: pulse — monitor: {MONITOR}")
     smooth = EnvelopeFollower()
     phase  = 0.0
@@ -164,9 +185,12 @@ def mode_pulse():
             g = min(255, int(g * scale))
             b = min(255, int(b * scale))
             paint_uniform(r, g, b)
+            commit()
 
 
 def mode_bands():
+    sysfs(f"{WMI_DEV}/effect", "1")
+    sysfs(f"{WMI_DEV}/speed", "2")
     print(f"  MODE: bands — monitor: {MONITOR}")
     bands    = make_bands()
     smooths  = [EnvelopeFollower(0.90, 0.80) for _ in range(4)]
@@ -182,7 +206,11 @@ def mode_bands():
 
             energies = []
             for i, b in enumerate(bands):
-                e = sum(b.feed(s / 32768.0) for s in samples) / CHUNK
+                acc = 0.0; cnt = 0
+                for s in samples:
+                    v = b.feed(s / 32768.0)
+                    if v > 0.0: acc += v; cnt += 1
+                e = acc / max(cnt, 1)
                 energies.append(smooths[i].update(e))
 
             ok, last = throttle(last)
@@ -195,10 +223,13 @@ def mode_bands():
                 r = min(255, int(r * scale / 255.0))
                 g = min(255, int(g * scale / 255.0))
                 b = min(255, int(b * scale / 255.0))
-                paint_zone(zone_map[i], r, g, b)
+                paint_zone(i, r, g, b)
+            commit()
 
 
 def mode_disco():
+    sysfs(f"{WMI_DEV}/effect", "1")
+    sysfs(f"{WMI_DEV}/speed", "2")
     print(f"  MODE: disco — monitor: {MONITOR}")
     bands   = make_bands()
     smooths = [EnvelopeFollower() for _ in range(4)]
@@ -214,7 +245,11 @@ def mode_disco():
 
             energies = []
             for i, b in enumerate(bands):
-                e = sum(b.feed(s / 32768.0) for s in samples) / CHUNK
+                acc = 0.0; cnt = 0
+                for s in samples:
+                    v = b.feed(s / 32768.0)
+                    if v > 0.0: acc += v; cnt += 1
+                e = acc / max(cnt, 1)
                 energies.append(smooths[i].update(e))
 
             ok, last = throttle(last)
@@ -229,9 +264,12 @@ def mode_disco():
             g = min(255, int(g * scale))
             b = min(255, int(b * scale))
             paint_uniform(r, g, b)
+            commit()
 
 
 def mode_fire():
+    sysfs(f"{WMI_DEV}/effect", "1")
+    sysfs(f"{WMI_DEV}/speed", "2")
     print(f"  MODE: fire — monitor: {MONITOR}")
     smooth = EnvelopeFollower(0.88, 0.78)
     last   = 0.0
@@ -255,6 +293,7 @@ def mode_fire():
             g = min(255, int(g * scale))
             b = min(255, int(b * scale))
             paint_uniform(r, g, b)
+            commit()
 
 
 def hue_to_rgb(h):
