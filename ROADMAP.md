@@ -90,7 +90,8 @@ Acceptance criteria:
 
 ## P2: Public Maintenance Loop
 
-Status: initial GitHub issue template and generic-host CI workflow exist.
+Status: initial GitHub issue template, generic-host CI workflow, and local
+`scripts/check.sh` exist.
 
 Goal: make public issue handling repeatable.
 

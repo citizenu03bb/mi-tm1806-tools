@@ -98,12 +98,12 @@ See [`hotkey/README.md`](hotkey/README.md) for setup.
 Non-hardware regression tests run on a generic Linux host:
 
 ```sh
-python3 -m unittest discover
+scripts/check.sh
 ```
 
-The GitHub workflow runs these tests plus Python compile checks, Bash syntax
-checks, and a public-path sanity scan. Hardware-specific kernel/OpenRGB checks
-remain local verification steps.
+This runs Python compile checks, unit tests, Bash syntax checks, and a
+public-path sanity scan. Hardware-specific kernel/OpenRGB checks remain local
+verification steps.
 
 ## Known limitations
 
