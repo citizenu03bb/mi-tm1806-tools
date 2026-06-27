@@ -1,25 +1,28 @@
 [Unit]
-Description=Mi Gaming Laptop macro-key handler
+Description=Mi Gaming Laptop macro-key handler (multi-user)
 After=acpid.service multi-user.target
 Wants=acpid.service
 
 [Service]
 Type=simple
-ExecStart=/home/pat/mi-hotkey/daemon.py
+ExecStart=/usr/local/bin/mi-hotkey-daemon
 ExecReload=/bin/kill -HUP $MAINPID
-Environment=MI_HOTKEY_USER=pat
-Environment=MI_HOTKEY_CONFIG=/home/pat/mi-hotkey/config.toml
 Restart=on-failure
 RestartSec=2
 
-# Needs root for /proc/acpi/call writes and /dev/uinput access.
+# Don't litter __pycache__ next to the script under read-only /usr.
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Needs root for /proc/acpi/call writes and /dev/uinput access, plus
+# reading the active user's /proc/<pid>/environ for session env discovery.
 User=root
 Group=root
 
-# Hardening that's safe for what the daemon does
+# Hardening that's safe for what the daemon does. ProtectHome=read-only
+# still allows reading per-user ~/.config/mi-hotkey/config.toml.
 NoNewPrivileges=false
 ProtectSystem=strict
-ReadWritePaths=/proc/acpi/call /dev/uinput /home/pat/mi-hotkey
+ReadWritePaths=/proc/acpi/call /dev/uinput
 ProtectHome=read-only
 PrivateTmp=true
 

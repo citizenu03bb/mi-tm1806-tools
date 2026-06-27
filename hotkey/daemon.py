@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """mi-hotkey daemon.
-Listens for ACPI WMI events from the Mi Gaming Laptop (TIMI TM1806) macro-key
-strip and dispatches user-defined actions from config.toml.
 
-Run as root: sudo ~/mi-hotkey/daemon.py
+Multi-user system service: listens for ACPI WMI events from the Mi Gaming
+Laptop (TIMI TM1806) macro-key strip and dispatches per-user actions to
+whoever is currently logged in at the seat0 console.
+
+Config resolution per event:
+  1.  ~<active-user>/.config/mi-hotkey/config.toml   (preferred)
+  2.  $MI_HOTKEY_CONFIG  or  /etc/mi-hotkey/config.toml   (system fallback)
+
+If MI_HOTKEY_USER is set, the daemon ignores active-session detection and
+dispatches as that user (useful for headless testing).
+
+Run as root.
 """
 
 from __future__ import annotations
@@ -19,9 +28,9 @@ import tomllib
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_CONFIG = "/home/pat/mi-hotkey/config.toml"
-CONFIG_PATH = os.environ.get("MI_HOTKEY_CONFIG", DEFAULT_CONFIG)
-DISPATCH_USER = os.environ.get("MI_HOTKEY_USER") or os.environ.get("SUDO_USER") or "pat"
+SYSTEM_CONFIG_DEFAULT = "/etc/mi-hotkey/config.toml"
+SYSTEM_CONFIG_PATH = os.environ.get("MI_HOTKEY_CONFIG", SYSTEM_CONFIG_DEFAULT)
+FORCED_USER = os.environ.get("MI_HOTKEY_USER")  # None = auto-detect active
 
 GUID_MIAP_EVENT = "B74AF83F"   # macro keys
 GUID_FAN_MODE_A = "EB2464D2"   # fan: WMID notify 0xA2 (boost)
@@ -240,34 +249,151 @@ def inject_key(code_name: str, edge: str = "tap") -> None:
     ui.syn()
 
 
+# ── per-user context ──────────────────────────────────────────────────────────
+
+
+class UserContext:
+    """One active user's resolved state: identity, session env, config."""
+
+    def __init__(self, username: str):
+        pw = pwd.getpwnam(username)            # raises KeyError if unknown
+        self.username = username
+        self.uid = pw.pw_uid
+        self.gid = pw.pw_gid
+        self.home = pw.pw_dir
+        self._env: dict[str, str] | None = None
+        self._config: dict | None = None
+        self._config_mtime: float | None = None
+        self._config_path: str | None = None
+
+    @property
+    def env(self) -> dict[str, str]:
+        if self._env is None:
+            self._env = find_user_session_env(self.username)
+            if not self._env:
+                log(f"  WARN: no session env for {self.username!r}; "
+                    "shell/notify actions may fail")
+        return self._env
+
+    def invalidate_env(self) -> None:
+        self._env = None
+
+    def resolve_config_path(self) -> str:
+        per_user = os.path.join(self.home, ".config/mi-hotkey/config.toml")
+        if os.path.exists(per_user):
+            return per_user
+        return SYSTEM_CONFIG_PATH
+
+    def load_config(self) -> dict:
+        """Re-read config if its mtime has changed (or first call). Cheap
+        enough to do per event — avoids needing inotify or SIGHUP for edits."""
+        path = self.resolve_config_path()
+        try:
+            mtime = os.path.getmtime(path)
+        except FileNotFoundError:
+            if self._config_path != path or self._config is None:
+                log(f"  no config for {self.username!r} (tried {path}) — empty")
+            self._config = {}
+            self._config_path = path
+            self._config_mtime = None
+            return self._config
+
+        if (path == self._config_path
+                and self._config_mtime == mtime
+                and self._config is not None):
+            return self._config
+
+        try:
+            with open(path, "rb") as f:
+                self._config = tomllib.load(f)
+            self._config_path = path
+            self._config_mtime = mtime
+            log(f"  loaded config for {self.username!r}: {path} "
+                f"({len(self._config)} sections)")
+        except Exception as e:
+            log(f"  ! config load error for {self.username!r} ({path}): {e}")
+            self._config = {}
+        return self._config
+
+
+# ── active user detection ─────────────────────────────────────────────────────
+
+
+def get_active_username() -> str | None:
+    """Return the username currently active on seat0, or None.
+
+    Uses systemd-logind via `loginctl`. The "active" session is the one
+    holding the local foreground console (graphical or text). Only seat0
+    is considered — events can only physically come from the local
+    keyboard, so a seat0 anchor is correct.
+    """
+    if FORCED_USER:
+        return FORCED_USER
+    try:
+        sid = subprocess.check_output(
+            ["loginctl", "show-seat", "seat0", "-p", "ActiveSession", "--value"],
+            text=True, timeout=2,
+        ).strip()
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+    if not sid:
+        return None
+    try:
+        name = subprocess.check_output(
+            ["loginctl", "show-session", sid, "-p", "Name", "--value"],
+            text=True, timeout=2,
+        ).strip()
+    except subprocess.SubprocessError:
+        return None
+    return name or None
+
+
+# username → UserContext, kept for the lifetime of the daemon.
+_user_ctx_cache: dict[str, UserContext] = {}
+_last_active_user: str | None = None
+
+
+def get_active_context() -> UserContext | None:
+    """Return the UserContext for whoever's active on seat0 right now.
+    Invalidates the previous user's session env if the active user changed
+    (so re-login picks up a fresh DISPLAY/XAUTHORITY)."""
+    global _last_active_user
+
+    user = get_active_username()
+    if user is None:
+        return None
+
+    if user != _last_active_user and _last_active_user is not None:
+        log(f"active user changed: {_last_active_user!r} → {user!r}")
+        if _last_active_user in _user_ctx_cache:
+            _user_ctx_cache[_last_active_user].invalidate_env()
+    _last_active_user = user
+
+    ctx = _user_ctx_cache.get(user)
+    if ctx is None:
+        try:
+            ctx = UserContext(user)
+        except KeyError:
+            log(f"  ! loginctl reported unknown user {user!r}")
+            return None
+        _user_ctx_cache[user] = ctx
+    return ctx
+
+
 # ── action dispatch ───────────────────────────────────────────────────────────
 
 
-_user_env_cache: dict[str, str] | None = None
-
-
-def get_dispatch_env() -> dict[str, str]:
-    global _user_env_cache
-    if _user_env_cache is None:
-        _user_env_cache = find_user_session_env(DISPATCH_USER)
-        if not _user_env_cache:
-            log(f"WARN: no session env found for user {DISPATCH_USER!r}; "
-                "shell/notify actions may fail")
-    # Caller should still merge with the basic env passing PATH etc.
-    base = {
+def run_as_user(ctx: UserContext, argv: list[str], shell: bool = False,
+                cmd: str | None = None) -> None:
+    env = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "HOME": pwd.getpwnam(DISPATCH_USER).pw_dir,
-        "USER": DISPATCH_USER,
-        "LOGNAME": DISPATCH_USER,
+        "HOME": ctx.home,
+        "USER": ctx.username,
+        "LOGNAME": ctx.username,
     }
-    base.update(_user_env_cache)
-    return base
-
-
-def run_as_user(argv: list[str], shell: bool = False, cmd: str | None = None) -> None:
-    env = get_dispatch_env()
-    target_uid = pwd.getpwnam(DISPATCH_USER).pw_uid
-    target_gid = pwd.getpwnam(DISPATCH_USER).pw_gid
+    env.update(ctx.env)
+    target_uid = ctx.uid
+    target_gid = ctx.gid
 
     def preexec():
         os.setgid(target_gid)
@@ -285,10 +411,6 @@ def run_as_user(argv: list[str], shell: bool = False, cmd: str | None = None) ->
                 argv, env=env, preexec_fn=preexec,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
-        # Detach; reap async via a tiny waiter so zombies don't accumulate.
-        # For now: don't block on output unless the command is fast — but we DO
-        # want stderr surfaced on failure. Wait up to 2s; longer commands keep
-        # running but we miss their errors (acceptable trade-off).
         try:
             out, err = proc.communicate(timeout=2)
             if proc.returncode != 0:
@@ -299,14 +421,14 @@ def run_as_user(argv: list[str], shell: bool = False, cmd: str | None = None) ->
         log(f"  ! dispatch error: {e}")
 
 
-def run_action(action: dict) -> None:
+def run_action(ctx: UserContext, action: dict) -> None:
     t = action.get("type", "shell")
     if t == "noop":
         return
     if t == "shell":
-        run_as_user([], shell=True, cmd=action["cmd"])
+        run_as_user(ctx, [], shell=True, cmd=action["cmd"])
     elif t == "exec":
-        run_as_user(action["argv"], shell=False)
+        run_as_user(ctx, action["argv"], shell=False)
     elif t == "key":
         inject_key(action["code"], edge="tap")
     elif t == "key_down":
@@ -317,7 +439,7 @@ def run_action(action: dict) -> None:
         title = action.get("title", "")
         body = action.get("body", "")
         timeout = str(action.get("timeout_ms", 1500))
-        run_as_user(["notify-send", "-t", timeout, title, body], shell=False)
+        run_as_user(ctx, ["notify-send", "-t", timeout, title, body], shell=False)
     else:
         log(f"  ! unknown action type {t!r}")
 
@@ -334,32 +456,26 @@ def normalize(binding) -> list[dict]:
     return []
 
 
-def dispatch(config: dict, key: str, edge: str) -> None:
+def dispatch(key: str, edge: str) -> None:
+    """Look up the active user, load their config, run bindings."""
+    ctx = get_active_context()
+    if ctx is None:
+        log(f"  -> {key}/{edge}: no active seat0 user, skipping")
+        return
+    config = ctx.load_config()
     actions = normalize(config.get(key, {}).get(edge))
     if not actions:
-        log(f"  -> {key}/{edge}: (no binding)")
+        log(f"  -> {key}/{edge}: ({ctx.username}, no binding)")
         return
-    log(f"  -> {key}/{edge}: {len(actions)} action(s)")
+    log(f"  -> {key}/{edge}: ({ctx.username}, {len(actions)} action(s))")
     for a in actions:
-        run_action(a)
+        run_action(ctx, a)
 
 
 # ── main loop ─────────────────────────────────────────────────────────────────
 
 
-def load_config() -> dict:
-    if not os.path.exists(CONFIG_PATH):
-        log(f"config not found: {CONFIG_PATH} — running with empty config")
-        return {}
-    try:
-        with open(CONFIG_PATH, "rb") as f:
-            return tomllib.load(f)
-    except Exception as e:
-        log(f"config load error: {e}")
-        return {}
-
-
-def _dispatch_miap(config: dict) -> None:
+def _dispatch_miap() -> None:
     try:
         buf = call_wed(0x80)
     except Exception as e:
@@ -377,19 +493,19 @@ def _dispatch_miap(config: dict) -> None:
     if mapping is None:
         log(f"  -> unknown EVT1=0x{evt1:02x}, raw={buf[:8].hex(' ')}")
         return
-    dispatch(config, *mapping)
+    dispatch(*mapping)
 
 
-def _dispatch_fan(config: dict, notify: int) -> None:
+def _dispatch_fan(notify: int) -> None:
     if notify == 0xA2:
-        dispatch(config, "fan", "mode_a")
+        dispatch("fan", "mode_a")
     elif notify == 0xA9:
-        dispatch(config, "fan", "mode_b")
+        dispatch("fan", "mode_b")
     else:
         log(f"  -> unknown fan notify=0x{notify:02x}")
 
 
-def handle_event(line: str, config: dict) -> None:
+def handle_event(line: str) -> None:
     parts = line.split()
     if not parts:
         return
@@ -403,19 +519,19 @@ def handle_event(line: str, config: dict) -> None:
             return
         kind = PNP_TO_HANDLER.get(device)
         if kind == "miap_event":
-            _dispatch_miap(config)
+            _dispatch_miap()
         elif kind == "fan_event":
-            _dispatch_fan(config, notify)
+            _dispatch_fan(notify)
         return
 
     # Legacy ≤6.9 format: "<GUID> <notify_hex> <data_hex>"
     guid = parts[0]
     if guid.startswith(GUID_MIAP_EVENT):
-        _dispatch_miap(config)
+        _dispatch_miap()
     elif guid.startswith(GUID_FAN_MODE_A):
-        dispatch(config, "fan", "mode_a")
+        dispatch("fan", "mode_a")
     elif guid.startswith(GUID_FAN_MODE_B):
-        dispatch(config, "fan", "mode_b")
+        dispatch("fan", "mode_b")
 
 
 def main() -> None:
@@ -423,9 +539,11 @@ def main() -> None:
         print("Run as root.", file=sys.stderr)
         sys.exit(1)
 
-    config = load_config()
-    log(f"mi-hotkey daemon started. config={CONFIG_PATH} user={DISPATCH_USER}")
-    log(f"loaded sections: {sorted(config.keys())}")
+    log("mi-hotkey daemon started (multi-user mode).")
+    log(f"  system config fallback: {SYSTEM_CONFIG_PATH}")
+    log(f"  per-user config:        ~<user>/.config/mi-hotkey/config.toml")
+    if FORCED_USER:
+        log(f"  MI_HOTKEY_USER override active: dispatching as {FORCED_USER!r}")
 
     # Discover which PNP0C14:NN platform devices host our event GUIDs. Built
     # at startup (not module-import) so log() is available for diagnostics.
@@ -437,15 +555,8 @@ def main() -> None:
         for pnp, kind in sorted(PNP_TO_HANDLER.items()):
             log(f"WMI handler bound: {pnp} → {kind}")
 
-    # Pre-warm uinput if any 'key*' action is in config.
-    if any(
-        a.get("type", "").startswith("key")
-        for sec in config.values() if isinstance(sec, dict)
-        for binding in sec.values()
-        for a in normalize(binding)
-        if isinstance(a, dict)
-    ):
-        get_uinput()
+    # uinput is created lazily on first 'key*' action; we don't pre-warm it
+    # here because configs are now resolved per-event (no startup-time view).
 
     proc = subprocess.Popen(
         ["acpi_listen"], stdout=subprocess.PIPE, text=True, bufsize=1
@@ -462,12 +573,11 @@ def main() -> None:
         sys.exit(0)
 
     def reload_config(signum, frame):
-        nonlocal config
-        global _user_env_cache
-        log("SIGHUP received — reloading config and re-scanning session env")
-        config = load_config()
-        _user_env_cache = None
-        log(f"reloaded sections: {sorted(config.keys())}")
+        log("SIGHUP received — invalidating per-user caches "
+            "(configs are otherwise auto-reloaded on mtime change)")
+        for ctx in _user_ctx_cache.values():
+            ctx.invalidate_env()
+            ctx._config_mtime = None  # force re-read on next event
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
@@ -479,7 +589,7 @@ def main() -> None:
             continue
         log(f"event: {line}")
         try:
-            handle_event(line, config)
+            handle_event(line)
         except Exception as e:
             log(f"  ! handler error: {e}")
 
