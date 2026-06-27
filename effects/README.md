@@ -64,5 +64,6 @@ Presets saved here can be played from:
 
 ## Dependencies
 
-- `python3` with PyQt5 (`python3-pyqt5`)
-- `sudo` access to `rgbkb/rgbkb` (for painting to hardware)
+- `python3` with PyQt5 (`python3-pyqt5`) — for the visual editor
+- `sudo` access to `rgbkb/rgbkb` — for painting to hardware
+- `pulseaudio-utils` (`pactl`) — audiovisualizer uses it to find the default audio sink
