@@ -1,6 +1,8 @@
 # Effects (`effects/`)
 
-Flashy presets and a visual composer for the TM1806 keyboard backlight.
+Flashy presets, an audio visualizer, and a visual composer for the TM1806 keyboard backlight.
+
+These tools use the `mi-tm1806-led` kernel driver's sysfs store-and-commit interface. Load the driver first and ensure your user can write the LED/WMI sysfs nodes, or run the tools with `sudo`.
 
 ## Quick start
 
@@ -58,12 +60,14 @@ A PyQt5 GUI for composing per-zone colour sequences:
 ```
 
 Presets saved here can be played from:
-- The Bash CLI: `sudo ./effects/rgbkb-effects preset <name>`
+- The preset launcher: `sudo ./effects/rgbkb-effects preset <name>`
 - The OpenRGB plugin's preset player tab
 - Any custom script that reads the JSON format
 
 ## Dependencies
 
+- `mi-tm1806-led` kernel module loaded
+- write access to `/sys/class/leds/mi_tm1806::kbd_*` and `/sys/bus/wmi/devices/E2A89D40-.../`
 - `python3` with PyQt5 (`python3-pyqt5`) — for the visual editor
-- `sudo` access to `rgbkb/rgbkb` — for painting to hardware
 - `pulseaudio-utils` (`pactl`) — audiovisualizer uses it to find the default audio sink
+- PipeWire `pw-cat` — audiovisualizer captures the monitor stream

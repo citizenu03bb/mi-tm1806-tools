@@ -2,7 +2,7 @@
 |  OpenRGBMiTM1806Plugin.cpp                                        |
 |                                                                   |
 |  Plugin entry point + PresetWidget for browsing and playing       |
-|  effect presets (effects/presets/*.json) inside the OpenRGB GUI.  |
+|  effect presets from effects/presets inside the OpenRGB GUI.      |
 \*-----------------------------------------------------------------*/
 
 #include "OpenRGBMiTM1806Plugin.h"
@@ -21,6 +21,7 @@
 #include <QFileInfo>
 #include <QStyle>
 #include <QTimer>
+#include <QStandardPaths>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -32,8 +33,6 @@ const char* const PresetWidget::ZONE_NAMES[4]  =
     { "bar", "left", "mid", "right" };
 const char* const PresetWidget::ZONE_LABELS[4] =
     { "Bar\n(Hotkeys)", "Left", "Middle", "Right" };
-const char*       PresetWidget::PRESETS_DIR     =
-    "/home/pat/.config/OpenRGB/plugins/presets";
 
 /*---------------------------------------------------------------------*\
 |  sysfs helpers                                                        |
@@ -44,6 +43,50 @@ bool PresetWidget::sysfsWrite(const QString& path, const QString& value)
     if(!f.is_open()) return false;
     f << value.toStdString();
     return f.good();
+}
+
+QString PresetWidget::presetsDir()
+{
+    QByteArray env = qgetenv("MI_TM1806_PRESETS_DIR");
+    if(!env.isEmpty())
+    {
+        return QString::fromLocal8Bit(env);
+    }
+
+    QString config_home = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+    if(config_home.isEmpty())
+    {
+        config_home = QDir::homePath() + "/.config";
+    }
+    return config_home + "/OpenRGB/plugins/presets";
+}
+
+QString PresetWidget::editorPath()
+{
+    QByteArray env = qgetenv("MI_TM1806_TOOLS_DIR");
+    if(!env.isEmpty())
+    {
+        QString candidate = QString::fromLocal8Bit(env) + "/effects/editor.py";
+        if(QFileInfo::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    QFileInfo preset_info(presetsDir());
+    QString preset_path = preset_info.isSymLink()
+        ? preset_info.symLinkTarget()
+        : preset_info.absoluteFilePath();
+    QDir dir(preset_path);
+    if(dir.dirName() == "presets" && dir.cdUp() && dir.dirName() == "effects" && dir.cdUp())
+    {
+        QString candidate = dir.filePath("effects/editor.py");
+        if(QFileInfo::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+    return QString();
 }
 
 /*---------------------------------------------------------------------*\
@@ -110,10 +153,14 @@ PresetWidget::PresetWidget()
     dur_row->addWidget(btn_save_preset);
 
     QPushButton* btn_editor = new QPushButton("🖉 Open Full Editor");
-    connect(btn_editor, &QPushButton::clicked, [](){
-        QProcess::startDetached("python3",
-            {"effects/editor.py"},
-            "/home/pat/Projects/mi-tm1806-tools");
+    connect(btn_editor, &QPushButton::clicked, [this](){
+        QString editor = editorPath();
+        if(editor.isEmpty())
+        {
+            label_status->setText("Set MI_TM1806_TOOLS_DIR to open the editor");
+            return;
+        }
+        QProcess::startDetached("python3", {editor}, QFileInfo(editor).absolutePath());
     });
     dur_row->addWidget(btn_editor);
     dur_row->addStretch();
@@ -154,7 +201,7 @@ void PresetWidget::scanPresets()
     presets.clear();
     preset_names.clear();
 
-    QDir dir(PRESETS_DIR);
+    QDir dir(presetsDir());
     if(!dir.exists()) { /* silently skip */ return; }
 
     QStringList files = dir.entryList({"*.json"}, QDir::Files, QDir::Name);
@@ -268,7 +315,7 @@ void PresetWidget::saveCurrentPreset()
     if(idx < 0 || idx >= presets.size() || idx >= preset_names.size()) return;
 
     QString name = preset_names[idx];
-    QString path = QString(PRESETS_DIR) + "/" + name + ".json";
+    QString path = presetsDir() + "/" + name + ".json";
 
     QJsonObject obj = presets[idx];
     QJsonDocument doc(obj);
@@ -346,7 +393,14 @@ void PresetWidget::onTimerTick()
 
     /* Paint current frame */
     QJsonObject frame = frames[current_frame].toObject();
-    paintFrame(frame);
+    if(!paintFrame(frame))
+    {
+        timer->stop();
+        playing = false;
+        btn_play->setText("▶ Play");
+        btn_stop->setEnabled(false);
+        return;
+    }
 
     /* Debug: show zone colours in status bar */
     QJsonArray cols = frame["zones"].toArray();
@@ -373,11 +427,12 @@ void PresetWidget::onTimerTick()
 /*---------------------------------------------------------------------*\
 |  Hardware paint                                                        |
 \*---------------------------------------------------------------------*/
-void PresetWidget::paintFrame(const QJsonObject& frame)
+bool PresetWidget::paintFrame(const QJsonObject& frame)
 {
     QJsonArray colours = frame["zones"].toArray();
     QString effect = presets[preset_combo->currentIndex()]["effect"].toString("static");
     if(effect.isEmpty()) effect = "static";
+    bool ok = true;
 
     /* Build sysfs paths */
     char led_path[128], wmi_effect[128], wmi_speed[128], wmi_commit[128];
@@ -395,12 +450,12 @@ void PresetWidget::paintFrame(const QJsonObject& frame)
         std::snprintf(led_path, sizeof(led_path),
                       "/sys/class/leds/mi_tm1806::kbd_%s/multi_intensity",
                       ZONE_NAMES[z]);
-        sysfsWrite(led_path, rgb);
+        ok = sysfsWrite(led_path, rgb) && ok;
 
         /* Also write brightness=255 so scaling doesn't zero us out */
         std::snprintf(led_path, sizeof(led_path),
                       "/sys/class/leds/mi_tm1806::kbd_%s/brightness", ZONE_NAMES[z]);
-        sysfsWrite(led_path, "255");
+        ok = sysfsWrite(led_path, "255") && ok;
 
         /* Update zone preview colour */
         QFrame* preview = qobject_cast<QFrame*>(zone_previews[z]);
@@ -424,13 +479,19 @@ void PresetWidget::paintFrame(const QJsonObject& frame)
 
     char buf[8];
     std::snprintf(buf, sizeof(buf), "%d", lety);
-    sysfsWrite(wmi_effect, buf);
+    ok = sysfsWrite(wmi_effect, buf) && ok;
     std::snprintf(buf, sizeof(buf), "%d", speed);
-    sysfsWrite(wmi_speed,  buf);
+    ok = sysfsWrite(wmi_speed,  buf) && ok;
 
     /* Commit */
     std::snprintf(wmi_commit, sizeof(wmi_commit), "%s/commit", wmi_base);
-    sysfsWrite(wmi_commit, "1");
+    ok = sysfsWrite(wmi_commit, "1") && ok;
+    if(!ok)
+    {
+        label_status->setText("Sysfs write failed; check driver, permissions, and KBBR");
+        return false;
+    }
+    return true;
 }
 
 

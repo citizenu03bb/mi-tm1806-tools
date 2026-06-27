@@ -14,15 +14,15 @@ Usage:
 """
 
 import subprocess, struct, math, sys, os, time, signal
-from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-RGBKB = str(SCRIPT_DIR / ".." / "rgbkb" / "rgbkb")
-
-# Sysfs paths for the kernel driver (no subprocesses, no /proc/acpi/call)
-LED_PREFIX  = "/sys/class/leds/mi_tm1806::kbd_"
-WMI_DEV     = "/sys/bus/wmi/devices/E2A89D40-784F-4E91-BE22-AE373CDEA97A"
-ZONES       = ["bar", "left", "mid", "right"]
+from mi_tm1806_sysfs import (
+    DriverUnavailable,
+    ZONES,
+    commit as sysfs_commit,
+    set_effect,
+    set_zone,
+    validate_driver,
+)
 
 SAMPLE_RATE = 44100
 CHUNK_MS    = 40
@@ -59,18 +59,9 @@ MONITOR = get_monitor()
 
 # ── helpers ──────────────────────────────────────────────────────
 
-def sysfs(path, value):
-    """Write a string to a sysfs file — no subprocess, no ACPI until commit."""
-    try:
-        with open(path, "w") as f:
-            f.write(str(value))
-    except OSError:
-        pass
-
 def paint_zone(idx, r, g, b):
     """Store colour for one zone via sysfs (no EC call)."""
-    sysfs(f"{LED_PREFIX}{ZONES[idx]}/multi_intensity", f"{r} {g} {b}")
-    sysfs(f"{LED_PREFIX}{ZONES[idx]}/brightness", "255")
+    set_zone(ZONES[idx], r, g, b)
 
 def paint_uniform(r, g, b):
     """Store the same colour on all 4 zones."""
@@ -79,7 +70,7 @@ def paint_uniform(r, g, b):
 
 def commit():
     """Batch-paint all stored zone colours to the EC in one ACPI call."""
-    sysfs(f"{WMI_DEV}/commit", "1")
+    sysfs_commit()
 
 _cleaned = False
 
@@ -88,17 +79,17 @@ def cleanup(sig=None, frame=None):
     if _cleaned:          # idempotent: signal + finally must not double-paint
         return
     _cleaned = True
-    paint_uniform(0, 255, 0)
-    commit()
-    print("\n  Restored to green.")
-    sys.exit(0)
+    try:
+        paint_uniform(0, 255, 0)
+        commit()
+        print("\n  Restored to green.")
+    except DriverUnavailable:
+        pass
+    if sig is not None:
+        sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
-
-if os.geteuid() != 0:
-    print("Must run as root (sudo).", file=sys.stderr)
-    sys.exit(1)
 
 # ── signal processing ─────────────────────────────────────────────
 
@@ -165,8 +156,7 @@ def throttle(last):
 # ── modes ─────────────────────────────────────────────────────────
 
 def mode_pulse():
-    sysfs(f"{WMI_DEV}/effect", "1")
-    sysfs(f"{WMI_DEV}/speed", "2")
+    set_effect("static", 2)
     print(f"  MODE: pulse — monitor: {MONITOR}")
     smooth = EnvelopeFollower()
     phase  = 0.0
@@ -195,8 +185,7 @@ def mode_pulse():
 
 
 def mode_bands():
-    sysfs(f"{WMI_DEV}/effect", "1")
-    sysfs(f"{WMI_DEV}/speed", "2")
+    set_effect("static", 2)
     print(f"  MODE: bands — monitor: {MONITOR}")
     bands    = make_bands()
     smooths  = [EnvelopeFollower(0.90, 0.80) for _ in range(4)]
@@ -234,8 +223,7 @@ def mode_bands():
 
 
 def mode_disco():
-    sysfs(f"{WMI_DEV}/effect", "1")
-    sysfs(f"{WMI_DEV}/speed", "2")
+    set_effect("static", 2)
     print(f"  MODE: disco — monitor: {MONITOR}")
     bands   = make_bands()
     smooths = [EnvelopeFollower() for _ in range(4)]
@@ -274,8 +262,7 @@ def mode_disco():
 
 
 def mode_fire():
-    sysfs(f"{WMI_DEV}/effect", "1")
-    sysfs(f"{WMI_DEV}/speed", "2")
+    set_effect("static", 2)
     print(f"  MODE: fire — monitor: {MONITOR}")
     smooth = EnvelopeFollower(0.88, 0.78)
     last   = 0.0
@@ -320,7 +307,11 @@ if __name__ == "__main__":
         print(f"Usage: sudo {sys.argv[0]} {{{('|').join(modes)}}}")
         sys.exit(1)
     try:
+        validate_driver()
         modes[mode]()
+    except DriverUnavailable as e:
+        print(f"Keyboard driver unavailable: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
     finally:

@@ -9,7 +9,7 @@
 #                                                                 #
 #  Set OPENRGB_SRC to your OpenRGB source tree pinned to          #
 #  release_0.9 (commit b5f46e3f), e.g.                            #
-#    qmake "OPENRGB_SRC=/home/pat/OpenRGB-src"                    #
+#    qmake "OPENRGB_SRC=$HOME/OpenRGB-src"                        #
 #-----------------------------------------------------------------#
 
 QT          += core gui widgets

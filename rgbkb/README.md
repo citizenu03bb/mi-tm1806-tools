@@ -1,6 +1,8 @@
-# rgbkb/
+# rgbkb/ legacy CLI
 
-Bash CLI for the 4-zone keyboard backlight on the TM1806. Uses ACPI WSAA (`\_SB_.MIAP.WSAA`) via `acpi_call` to talk to the EC, plus an EMEM mmap to read the current `KBBR` register (the brightness state needed for the Fn-bypass trick — see the top-level README's "What's novel" section).
+Bash CLI for the 4-zone keyboard backlight on the TM1806. Uses ACPI WSAA (`\_SB_.MIAP.WSAA`) via `acpi_call` to talk to the EC, plus an EMEM mmap to read the current `KBBR` register.
+
+This is the legacy userspace backend and protocol reference. For normal public usage, prefer the kernel driver in `driver/` and tools that use its sysfs store-and-commit interface.
 
 See the [top-level README](../README.md) for context, requirements, and the LEBR-bypass mechanism.
 

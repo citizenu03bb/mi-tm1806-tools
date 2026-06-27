@@ -40,10 +40,16 @@ static bool sysfs_write(const std::string& path, const std::string& value)
     std::ofstream f(path);
     if(!f.is_open())
     {
+        std::fprintf(stderr, "MiTM1806: cannot open %s for write\n", path.c_str());
         return false;
     }
     f << value;
-    return f.good();
+    if(!f.good())
+    {
+        std::fprintf(stderr, "MiTM1806: write failed for %s\n", path.c_str());
+        return false;
+    }
+    return true;
 }
 
 void RGBController_MiTM1806::WriteCommit()
@@ -251,6 +257,7 @@ void RGBController_MiTM1806::UpdateZoneLEDs(int zone_idx)
        && zones[zone_idx].colors != nullptr)
     {
         WriteZoneColor((unsigned int)zone_idx, zones[zone_idx].colors[0]);
+        WriteCommit();
     }
 }
 
@@ -260,6 +267,7 @@ void RGBController_MiTM1806::UpdateSingleLED(int led_idx)
        && (unsigned int)led_idx < colors.size())
     {
         WriteZoneColor((unsigned int)led_idx, colors[led_idx]);
+        WriteCommit();
     }
 }
 

@@ -4,15 +4,15 @@ Linux tools for the Xiaomi Mi Gaming Laptop 15.6 (TIMI **TM1806**, 2019).
 
 Four pieces, from lowest to highest level:
 
-- **`driver/`** — Linux kernel module. Registers the 4-zone keyboard as `/sys/class/leds/mi_tm1806::kbd_*` with a **store-and-commit** model for flicker-free updates and sysfs interface.
-- **`rgbkb/`** — Bash CLI. Paints colours and firmware effects via `/proc/acpi/call` (acpi_call).
-- **`effects/`** — Preset launcher + visual editor. 7 built-in flashy effects, a JSON preset system, and a PyQt5 GUI for composing per-zone colour sequences.
-- **`hotkey/`** — Python daemon that wires M1–M5 + Fan macro keys via ACPI WMI events (these keys never reach `/dev/input`).
+- **`driver/`** — primary backend. Linux kernel module exposing the 4-zone keyboard at `/sys/class/leds/mi_tm1806::kbd_*` with a **store-and-commit** sysfs interface for flicker-free updates.
+- **`effects/`** — preset launcher, audio visualizer, and visual editor. Uses the kernel driver's sysfs interface for live playback and JSON presets.
+- **`rgbkb/`** — legacy Bash CLI and protocol reference. Paints colours and firmware effects via `/proc/acpi/call` (`acpi_call`) and is useful for diagnostics/reverse-engineering.
+- **`hotkey/`** — Python daemon that wires M1-M5 + Fan macro keys via ACPI WMI events (these keys never reach `/dev/input`).
 
 Plus two integrations:
 
 - **`integrations/openrgb-plugin/`** — OpenRGB plugin: the keyboard appears alongside USB peripherals in the OpenRGB GUI, with a preset-player tab.
-- **`integrations/claude-code/`** — Claude Code hook that uses the bar zone as a session-status indicator.
+- **`integrations/claude-code/`** — optional Claude Code hook that uses the bar zone as a session-status indicator.
 
 This is documentation for hackers who own this exact hardware and want to control it from Linux. It is not a general-purpose utility.
 
@@ -25,8 +25,8 @@ But the firmware on the Quanta-built Mi laptop speaks a **different protocol**: 
 
 ## Requirements
 
-- Linux 6.10+ (for `/dev/mem` mmap of EMEM under `STRICT_DEVMEM`, and for kernel-module build)
-- `acpi_call` DKMS module loaded (for the Bash CLI and hotkey daemon; not needed for the kernel driver)
+- Linux 6.10+ for the tested kernel-module build path; the legacy `rgbkb/` diagnostics also rely on `/dev/mem` mmap of EMEM under `STRICT_DEVMEM`
+- `acpi_call` DKMS module loaded only for the legacy Bash CLI and the hotkey daemon; it is not needed for the keyboard LED driver
 - root (acpi_call's `/proc/acpi/call` is mode-600 root; EMEM mmap needs CAP_SYS_RAWIO; kernel module insmod/rmmod needs root)
 - Secure Boot disabled, OR modules signed with an MOK-enrolled key
 - Python 3.10+, `python3-evdev` (for hotkey daemon), `python3-pyqt5` (for effects editor)
@@ -53,9 +53,21 @@ echo 1 | sudo tee /sys/bus/wmi/devices/E2A89D40-*/commit
 
 See [`driver/README.md`](driver/README.md) for full usage, DKMS setup, and design rationale.
 
-### Backlight CLI (`rgbkb/`)
+### Effects (`effects/`)
 
-The CLI is a single Bash script. From the repo root:
+High-level tools use the kernel driver's sysfs interface. Load the driver first.
+
+```sh
+sudo ./effects/rgbkb-effects rainbow
+sudo ./effects/audiovisualizer.py pulse
+python3 ./effects/editor.py
+```
+
+See [`effects/README.md`](effects/README.md) for dependencies and preset details.
+
+### Legacy backlight CLI (`rgbkb/`)
+
+The CLI is a single Bash script using `acpi_call` directly. It remains useful as a diagnostic and protocol reference, but the public quick-start path is the kernel driver above. From the repo root:
 
 ```
 sudo ./rgbkb/rgbkb solid     red
@@ -67,29 +79,6 @@ sudo ./rgbkb/rgbkb brightness 2          # 0=max, 5=off
 sudo ./rgbkb/rgbkb status                # dump EC state
 ```
 
-### Effects (`effects/`)
-
-Flashy presets and a visual composer:
-
-```sh
-# Built-in effects
-sudo ./effects/rgbkb-effects rainbow   # spectrum cycle
-sudo ./effects/rgbkb-effects police    # red/blue alternating zones
-sudo ./effects/rgbkb-effects disco     # random colours + modes
-sudo ./effects/rgbkb-effects all       # cycle through all 7
-
-# Audio visualizer (keyboard reacts to system audio output)
-sudo ./effects/audiovisualizer.py pulse  # uniform colour pulses to the beat effects
-
-# Custom presets
-sudo ./effects/rgbkb-effects preset my-effect
-
-# Visual editor
-python3 ./effects/editor.py
-```
-
-See [`effects/README.md`](effects/README.md) for full documentation.
-
 ### Macro-key daemon (`hotkey/`)
 
 See [`hotkey/README.md`](hotkey/README.md) for setup.
@@ -98,6 +87,7 @@ See [`hotkey/README.md`](hotkey/README.md) for setup.
 
 - **Panel can't be woken from `KBBR=5` by software.** Press Fn+keyboard-brightness once after a cold boot; after that, everything works.
 - **Hardware-specific.** Tested only on TM1806 with BIOS XMGCF5R0P0202. The WMI GUID, EMEM physical address, KBBR offset, and zone mapping are all DSDT-derived and may differ on other TIMI models or after a BIOS update.
+- **Manual install only.** This repo is public-ready for hackers, not packaged for distributions. Follow the per-directory READMEs and verify each component before enabling it at boot.
 
 ## Layout
 
@@ -114,6 +104,8 @@ rgbkb/                   Bash CLI for the 4-zone backlight
 
 effects/                 Preset launcher + visual editor
   rgbkb-effects          7 built-in effects + preset player
+  kbdctl.py              small CLI for the kernel-driver sysfs backend
+  mi_tm1806_sysfs.py     shared Python sysfs helper
   editor.py              PyQt5 visual composer
   presets/               JSON preset files
   README.md
@@ -130,6 +122,8 @@ docs/
   DSDT-extracts.md       relevant _Q-handlers, MIAP namespace, EMEM regions
 ```
 
+See [`ROADMAP.md`](ROADMAP.md) for known follow-up work.
+
 ## Credits
 
 - **chocapikk** — broader ITE 8910 reverse-engineering blog post (XMG/Clevo flavor)
@@ -138,4 +132,4 @@ docs/
 
 ## Status
 
-Not yet on GitHub or any registry. Run from a local clone. License: MIT (see `LICENSE`).
+Public hacker release from a local clone. License: MIT (see `LICENSE`); the kernel module source is dual MIT/GPL-2.0 for kernel compatibility.

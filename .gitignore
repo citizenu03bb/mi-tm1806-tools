@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 *.swp
 .DS_Store
+*.log
+_*.sh
 
 # personal config (only the example template is committed)
 hotkey/config.toml

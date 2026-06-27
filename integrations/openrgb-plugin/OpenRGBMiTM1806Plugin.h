@@ -40,7 +40,7 @@ private slots:
 
 private:
     void scanPresets();
-    void paintFrame(const QJsonObject& frame);
+    bool paintFrame(const QJsonObject& frame);
     void saveCurrentPreset();
 
     QComboBox*      preset_combo;
@@ -60,9 +60,9 @@ private:
 
     static const char* const ZONE_NAMES[4];
     static const char* const ZONE_LABELS[4];
-    static const char*       PRESETS_DIR;
-
     static bool sysfsWrite(const QString& path, const QString& value);
+    static QString presetsDir();
+    static QString editorPath();
 };
 
 class OpenRGBMiTM1806Plugin : public QObject, public OpenRGBPluginInterface

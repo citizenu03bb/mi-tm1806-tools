@@ -75,17 +75,17 @@ press = { type = "key", code = "KEY_PROG1" }
 
 # 8. Context-aware (delegate to your own wrapper that inspects active window)
 # [m3]
-# press = { type = "exec", argv = ["/home/pat/bin/macro3-context.sh"] }
+# press = { type = "exec", argv = ["sh", "-lc", "$HOME/bin/macro3-context.sh"] }
 
 # 9. Fan key — log to a file in addition to notifying
 [fan]
 mode_a = [
   { type = "notify", title = "Fan", body = "Boost mode" },
-  { type = "shell",  cmd = "echo \"$(date +%H:%M:%S) BOOST\" >> /home/pat/.fan-log" },
+  { type = "shell",  cmd = "echo \"$(date +%H:%M:%S) BOOST\" >> \"$HOME/.fan-log\"" },
 ]
 mode_b = [
   { type = "notify", title = "Fan", body = "Normal mode" },
-  { type = "shell",  cmd = "echo \"$(date +%H:%M:%S) NORMAL\" >> /home/pat/.fan-log" },
+  { type = "shell",  cmd = "echo \"$(date +%H:%M:%S) NORMAL\" >> \"$HOME/.fan-log\"" },
 ]
 
 # 10. Disable a key entirely (or leave the edge unset)

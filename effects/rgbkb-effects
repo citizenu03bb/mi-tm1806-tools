@@ -13,15 +13,15 @@
 #
 # Ctrl+C to stop — restores static green automatically.
 
-# We may be run via sudo, so find rgbkb relative to this script's location.
+# We may be run via sudo, so find the sysfs helper relative to this script.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RGBKB="$SCRIPT_DIR/../rgbkb/rgbkb"
+KBDCTL="$SCRIPT_DIR/kbdctl.py"
 
 RESTORE_COLOR="green"
 
 cleanup() {
     echo
-    "$RGBKB" solid "$RESTORE_COLOR" >/dev/null 2>&1 || true
+    "$KBDCTL" solid "$RESTORE_COLOR" >/dev/null 2>&1 || true
     echo "  Keyboard restored to $RESTORE_COLOR."
     exit 0
 }
@@ -63,7 +63,7 @@ rainbow() {
 
     while true; do
         for c in "${colors[@]}"; do
-            "$RGBKB" colorful "0x$c" "$(complement "$c")" --speed 1 >/dev/null 2>&1 || true
+            "$KBDCTL" colorful "0x$c" "$(complement "$c")" --speed 1 >/dev/null 2>&1 || true
             sleep 0.30
         done
     done
@@ -73,37 +73,31 @@ police() {
     banner "POLICE LIGHTS" "Red/blue alternating across zones. Classic."
 
     while true; do
-        "$RGBKB" zone bar     red    >/dev/null 2>&1 || true
-        "$RGBKB" zone kb-left blue   >/dev/null 2>&1 || true
-        "$RGBKB" zone kb-mid  red    >/dev/null 2>&1 || true
-        "$RGBKB" zone kb-right blue  >/dev/null 2>&1 || true
+        "$KBDCTL" frame red blue red blue >/dev/null 2>&1 || true
         sleep 0.35
 
-        "$RGBKB" zone bar     blue   >/dev/null 2>&1 || true
-        "$RGBKB" zone kb-left red    >/dev/null 2>&1 || true
-        "$RGBKB" zone kb-mid  blue   >/dev/null 2>&1 || true
-        "$RGBKB" zone kb-right red   >/dev/null 2>&1 || true
+        "$KBDCTL" frame blue red blue red >/dev/null 2>&1 || true
         sleep 0.35
     done
 }
 
 matrix() {
     banner "MATRIX" "Breathing green with occasional 'code rain' flickers"
-    "$RGBKB" breath "0x00FF00" --speed 0 >/dev/null 2>&1 || true
+    "$KBDCTL" breath "0x00FF00" --speed 0 >/dev/null 2>&1 || true
     local zones=(bar kb-left kb-mid kb-right)
 
     while true; do
         # Ambient breath
-        "$RGBKB" breath "0x00FF00" --speed 0 >/dev/null 2>&1 || true
+        "$KBDCTL" breath "0x00FF00" --speed 0 >/dev/null 2>&1 || true
         sleep 1.5
 
         # Brief "code rain" flicker on random zone
         local i=$((RANDOM % 4))
         local brightness=$((RANDOM % 80 + 120))
         local g=$(printf '%02X' "$brightness")
-        "$RGBKB" zone "${zones[$i]}" "0x00${g}00" >/dev/null 2>&1 || true
+        "$KBDCTL" zone "${zones[$i]}" "0x00${g}00" >/dev/null 2>&1 || true
         sleep 0.06
-        "$RGBKB" zone "${zones[$i]}" "0x00FF00" >/dev/null 2>&1 || true
+        "$KBDCTL" zone "${zones[$i]}" "0x00FF00" >/dev/null 2>&1 || true
         sleep 0.06
     done
 }
@@ -126,13 +120,13 @@ disco() {
 
         case "$mode" in
             colorful)
-                "$RGBKB" colorful "0x${c1}" "0x${c2}" --speed "$spd" >/dev/null 2>&1 || true ;;
+                "$KBDCTL" colorful "0x${c1}" "0x${c2}" --speed "$spd" >/dev/null 2>&1 || true ;;
             wave)
-                "$RGBKB" wave "0x${c1}" --speed "$spd" >/dev/null 2>&1 || true ;;
+                "$KBDCTL" wave "0x${c1}" --speed "$spd" >/dev/null 2>&1 || true ;;
             breath)
-                "$RGBKB" breath "0x${c1}" --speed "$spd" >/dev/null 2>&1 || true ;;
+                "$KBDCTL" breath "0x${c1}" --speed "$spd" >/dev/null 2>&1 || true ;;
             *)
-                "$RGBKB" solid "0x${c1}" >/dev/null 2>&1 || true ;;
+                "$KBDCTL" solid "0x${c1}" >/dev/null 2>&1 || true ;;
         esac
         sleep 0.35
     done
@@ -145,7 +139,7 @@ pulse() {
 
     while true; do
         for c in "${colors[@]}"; do
-            "$RGBKB" breath "0x${c}" --speed 1 >/dev/null 2>&1 || true
+            "$KBDCTL" breath "0x${c}" --speed 1 >/dev/null 2>&1 || true
             sleep 0.8
         done
     done
@@ -160,7 +154,7 @@ fire() {
 
     while true; do
         for c in "${colors[@]}"; do
-            "$RGBKB" solid "0x${c}" >/dev/null 2>&1 || true
+            "$KBDCTL" solid "0x${c}" >/dev/null 2>&1 || true
             sleep 0.06
         done
     done
@@ -172,7 +166,7 @@ wave_effect() {
 
     while true; do
         for c in "${colors[@]}"; do
-            "$RGBKB" wave "0x${c}" --speed 1 >/dev/null 2>&1 || true
+            "$KBDCTL" wave "0x${c}" --speed 1 >/dev/null 2>&1 || true
             sleep 1.0
         done
     done
@@ -199,19 +193,19 @@ play_preset() {
         echo "Available:" && ls "$SCRIPT_DIR/presets"/*.json 2>/dev/null | while read f; do echo "  $(basename "$f" .json)"; done
         exit 1
     fi
-    export RGBKB_PATH="$RGBKB"
+    export KBDCTL_PATH="$KBDCTL"
     export PRESET_PATH="$path"
     python3 -c "
 import json, os, subprocess, sys, time, signal
 
 def cleanup(sig, frame):
-    subprocess.run([rgbkb, 'solid', 'green'], capture_output=True, timeout=5)
+    subprocess.run([kbdctl, 'solid', 'green'], capture_output=True, timeout=5)
     print()
     sys.exit(0)
 signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
 
-rgbkb = os.environ['RGBKB_PATH']
+kbdctl = os.environ['KBDCTL_PATH']
 with open(os.environ['PRESET_PATH']) as f:
     data = json.load(f)
 
@@ -219,13 +213,11 @@ effect = data.get('effect', 'static')
 speed = str(data.get('speed', 2))
 sec_color = data.get('secondary', None)
 frames = data.get('frames', [])
-zones = ['bar', 'kb-left', 'kb-mid', 'kb-right']
 
 while True:
     for frame in frames:
         colours = frame['zones']
         dur = frame.get('duration', 0.5)
-        c0 = '0x' + colours[0]
 
         # Auto-compute complement for colorful if no secondary given
         secondary = sec_color
@@ -233,26 +225,18 @@ while True:
             r = int(colours[0][0:2], 16); g = int(colours[0][2:4], 16); b = int(colours[0][4:6], 16)
             secondary = f'{255-r:02X}{255-g:02X}{255-b:02X}'
 
-        if len(set(colours)) == 1:
-            if effect == 'colorful' and sec_color:
-                subprocess.run([rgbkb, 'colorful', c0, '0x'+sec_color,
-                                '--speed', speed], capture_output=True, timeout=10)
-            elif effect in ('breath', 'wave'):
-                subprocess.run([rgbkb, effect, c0, '--speed', speed],
-                               capture_output=True, timeout=10)
-            else:
-                subprocess.run([rgbkb, 'solid', c0], capture_output=True, timeout=10)
-        else:
-            for i, z in enumerate(zones):
-                subprocess.run([rgbkb, 'zone', z, '0x'+colours[i]],
-                               capture_output=True, timeout=10)
+        cmd = [kbdctl, 'frame', *('0x' + c for c in colours),
+               '--effect', effect, '--speed', speed]
+        if effect == 'colorful':
+            cmd += ['--secondary', '0x' + secondary]
+        subprocess.run(cmd, capture_output=True, timeout=10)
         time.sleep(dur)
 " || true
 }
 
 # --- Main --------------------------------------------------------------
 
-[ "$(id -u)" -eq 0 ] || { echo "rgbkb-effects: must run as root (sudo)" >&2; exit 1; }
+[ -x "$KBDCTL" ] || { echo "rgbkb-effects: missing executable $KBDCTL" >&2; exit 1; }
 
 case "${1:-}" in
     rainbow)     rainbow ;;

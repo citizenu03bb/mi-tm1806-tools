@@ -1,25 +1,25 @@
 # Architecture
 
-How the keyboard-control surface is wired together on TM1806. This is the mental model behind both `rgbkb/` and `hotkey/`.
+How the keyboard-control surface is wired together on TM1806. This is the mental model behind the kernel driver, legacy `rgbkb/`, and `hotkey/`.
 
 ## Layers
 
 ```
    Userspace
    ┌─────────────────────────────────────────────────────────────┐
-   │  rgbkb (Bash)             daemon.py (Python)                │
-   │   │                        │                                │
-   │   │  /proc/acpi/call       │  /proc/acpi/call (for _WED)    │
-   │   │  /dev/mem (KBBR read)  │  acpi_listen netlink           │
-   └───┼────────────────────────┼────────────────────────────────┘
-       │                        │
+   │ effects/editor/OpenRGB      rgbkb legacy     hotkey daemon  │
+   │   │                         │                │              │
+   │   │ sysfs LED/WMI attrs     │ /proc/acpi/call│ acpi_listen  │
+   │   │                         │ /dev/mem KBBR  │ _WED read    │
+   └───┼─────────────────────────┼────────────────┼──────────────┘
+       │                         │                │
    Kernel
-   ┌───▼────────────────────────▼────────────────────────────────┐
-   │  acpi_call DKMS module        ACPI subsystem (WMI bus)      │
-   │   │                            │                            │
-   │   │  evaluates AML method      │  surfaces _WDG / events    │
-   └───┼────────────────────────────┼────────────────────────────┘
-       │                            │
+   ┌───▼─────────────────────────▼────────────────▼──────────────┐
+   │ mi-tm1806-led WMI driver   acpi_call DKMS   ACPI/WMI bus    │
+   │   │ wmidev_block_set        │ eval AML       │ event notify  │
+   │   │ acpi_evaluate KBBR      │                │               │
+   └───┼─────────────────────────┼────────────────┼──────────────┘
+       │                         │                │
    ACPI / EC
    ┌───▼────────────────────────────▼────────────────────────────┐
    │  \_SB_.MIAP.WSAA   (32-byte buffer, opcodes FA00/FB00)      │
@@ -81,15 +81,17 @@ Triggers (verified empirically on this firmware):
 
 Because animated modes don't refresh from C-registers, `rgbkb` issues a static prepass before switching to LETY≠1 — that's the canonical two-pass.
 
-## Future direction: kernel module
+## Kernel module
 
-The current stack depends on `acpi_call` (third-party DKMS) and `/dev/mem`. A small kernel-style WMI bus driver in C would eliminate both dependencies and expose a sysfs interface. Sketch:
+The primary backend is now `driver/mi-tm1806-led.c`, a small WMI driver that eliminates `acpi_call` and `/dev/mem` for keyboard LED control. It exposes four multicolor LED class devices plus WMI device attributes for global state:
 
-1. `struct wmi_driver` binding to GUID `E2A89D40-784F-4E91-BE22-AE373CDEA97A`.
-2. WSAA writes via `wmidev_block_set(wdev, 0, &buf)` — uses the kernel's WMI bus serialization, which arbitrates concurrent ACPI evaluators (a property `acpi_call` does not guarantee).
-3. KBBR via `request_mem_region` + `ioremap` of the EMEM range.
-4. Expose `struct led_classdev_mc` with multi-color subleds.
+- binds a `struct wmi_driver` to GUID `E2A89D40-784F-4E91-BE22-AE373CDEA97A`
+- sends WSAA packets with `wmidev_block_set(wdev, 0, &buf)`
+- reads KBBR with `acpi_evaluate_integer()` on `\_SB_.PCI0.LPCB.EC0.KBBR`
+- exposes `struct led_classdev_mc` zones at `/sys/class/leds/mi_tm1806::kbd_*`
 
-Estimated ~200–300 LOC. Distribution via DKMS or a signed module if Secure Boot is on. C is currently the practical choice; Rust-for-Linux did not yet provide bindings for `<linux/wmi.h>` or `<linux/leds.h>` as of the kernel versions tested during development (6.10–6.17).
+The sysfs interface uses a store-and-commit model. Writes to zone `multi_intensity` and `brightness` only update kernel memory. A final write to the WMI device's `commit` attribute performs the EC transaction under one mutex: read KBBR once, stage C0Z/C1Z as needed, fire static paint triggers, and then switch to any requested animation mode.
 
-Mainline submission would require evidence the driver is useful on more than one BIOS revision. Adding 2–3 confirmed-working TIMI/Quanta variants is a reasonable bar before approaching `platform-driver-x86`.
+The legacy `rgbkb/` CLI still documents and exercises the raw `acpi_call` protocol. It is useful for diagnostics and reverse-engineering, but new high-level tools should use the kernel driver's sysfs surface.
+
+Mainline submission would require evidence the driver is useful on more than one BIOS revision. Adding 2-3 confirmed-working TIMI/Quanta variants is a reasonable bar before approaching `platform-driver-x86`.

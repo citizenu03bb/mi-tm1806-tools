@@ -92,3 +92,4 @@ openrgb-plugin/
 - **Setting a mode is global.** The Mi EC has one shared `LETY` register, so picking "Breath" in OpenRGB switches all 4 zones to breathing — there's no firmware path to "static bar + breathing keyboard area".
 - **Cold-boot panel-off case.** If `KBBR=5` at OpenRGB launch, the kernel driver returns `-ENXIO`. Press Fn+brightness once to wake.
 - **Preset path.** The plugin looks for presets at `~/.config/OpenRGB/plugins/presets/`. The install step above creates a symlink from your repo's `effects/presets/`.
+- **Path overrides.** Set `MI_TM1806_PRESETS_DIR=/path/to/presets` if you do not use the default OpenRGB plugin preset directory. Set `MI_TM1806_TOOLS_DIR=/path/to/mi-tm1806-tools` if the "Open Full Editor" button cannot infer the repo path from the presets symlink.

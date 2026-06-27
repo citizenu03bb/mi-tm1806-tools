@@ -45,7 +45,7 @@ Should show group `plugdev` with `g+w`. You need to be in `plugdev` (`groups | g
 
 ### 2. Hook script
 
-Already executable from this repo path. If you'd rather have it under `~/.claude/`:
+Install the hook under `~/.claude/`:
 
 ```sh
 mkdir -p ~/.claude/hooks
@@ -53,7 +53,7 @@ cp keyboard-status.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/keyboard-status.sh
 ```
 
-…and adjust the paths in step 3 accordingly. The default snippet below points at the in-repo path.
+The default snippet below points at this installed hook path.
 
 ### 3. Wire up `~/.claude/settings.json`
 
