@@ -90,6 +90,8 @@ Acceptance criteria:
 
 ## P2: Public Maintenance Loop
 
+Status: initial GitHub issue template and generic-host CI workflow exist.
+
 Goal: make public issue handling repeatable.
 
 - Document `python3 effects/kbdctl.py doctor` in the README and relevant

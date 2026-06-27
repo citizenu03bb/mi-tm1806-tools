@@ -101,6 +101,10 @@ Non-hardware regression tests run on a generic Linux host:
 python3 -m unittest discover
 ```
 
+The GitHub workflow runs these tests plus Python compile checks, Bash syntax
+checks, and a public-path sanity scan. Hardware-specific kernel/OpenRGB checks
+remain local verification steps.
+
 ## Known limitations
 
 - **Panel can't be woken from `KBBR=5` by software.** Press Fn+keyboard-brightness once after a cold boot; after that, everything works.
