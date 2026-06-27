@@ -191,7 +191,7 @@ def mode_bands():
             for i, energy in enumerate(energies):
                 hue = 0.0 + (1.0 - i / 4.0) * 0.66
                 r, g, b = hue_to_rgb(hue)
-                scale = min(255, int(energy * 700))
+                scale = max(8, min(255, int(energy * 150000)))
                 r = min(255, int(r * scale / 255.0))
                 g = min(255, int(g * scale / 255.0))
                 b = min(255, int(b * scale / 255.0))
