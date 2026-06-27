@@ -1,0 +1,123 @@
+{
+    "effect": "colorful",
+    "frames": [
+        {
+            "duration": 0.8,
+            "zones": [
+                "FF0000",
+                "FF0000",
+                "FF0000",
+                "FF0000"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "FF4000",
+                "FF4000",
+                "FF4000",
+                "FF4000"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "FF8000",
+                "FF8000",
+                "FF8000",
+                "FF8000"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "FFFF00",
+                "FFFF00",
+                "FFFF00",
+                "FFFF00"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "80FF00",
+                "80FF00",
+                "80FF00",
+                "80FF00"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "00FF00",
+                "00FF00",
+                "00FF00",
+                "00FF00"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "00FF80",
+                "00FF80",
+                "00FF80",
+                "00FF80"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "00FFFF",
+                "00FFFF",
+                "00FFFF",
+                "00FFFF"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "0080FF",
+                "0080FF",
+                "0080FF",
+                "0080FF"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "0000FF",
+                "0000FF",
+                "0000FF",
+                "0000FF"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "8000FF",
+                "8000FF",
+                "8000FF",
+                "8000FF"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "FF00FF",
+                "FF00FF",
+                "FF00FF",
+                "FF00FF"
+            ]
+        },
+        {
+            "duration": 0.8,
+            "zones": [
+                "FF0080",
+                "FF0080",
+                "FF0080",
+                "FF0080"
+            ]
+        }
+    ],
+    "speed": 1
+}

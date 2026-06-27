@@ -24,6 +24,17 @@
  * painter does not blank the panel. Animated modes (LETY != 1) do not
  * refresh from C-registers, so each paint is a static prepass followed
  * by a mode-switch LightEffect.
+ *
+ * Brightness model: STORE-AND-COMMIT.
+ * Writing to multi_intensity or brightness on any zone ONLY stores the
+ * colour in memory — no WSAA calls are issued.  To push all pending
+ * colours to the EC (and thus to the keyboard), write 1 to:
+ *   /sys/bus/wmi/devices/E2A89D40-.../commit
+ * This batch-paints all 4 zones in a single atomic cycle: one KBBR read,
+ * one or two C-reg stages, then LightEffect triggers for every zone.
+ * Because the entire commit runs under one mutex with no interleaved
+ * userspace round-trips, the zones update virtually simultaneously,
+ * eliminating the sequential wipe that caused visible flicker before.
  */
 
 #include <dt-bindings/leds/common.h>
@@ -125,23 +136,13 @@ static int mi_lighteffect(struct mi_tm *m, u8 ledz, u8 lety, u8 lspd, u8 lebr)
 	return mi_wsaa(m, buf);
 }
 
-/* Caller must hold m->lock. */
-static int mi_paint(struct mi_tm *m, u8 ledz, u8 r, u8 g, u8 b)
+/*
+ * Paint one zone.  Caller must hold m->lock.
+ * r/g/b are the final brightness-scaled values (0-255).
+ */
+static int mi_paint_zone(struct mi_tm *m, u8 ledz, u8 r, u8 g, u8 b, u8 kbbr)
 {
 	int ret;
-	u8 kbbr;
-
-	ret = mi_read_kbbr(&kbbr);
-	if (ret)
-		return ret;
-	if (kbbr == 5)
-		return -ENXIO;
-
-	if (m->effect == LETY_COLORFUL) {
-		ret = mi_stage_c(m, DT2A_C1Z, m->sec_r, m->sec_g, m->sec_b);
-		if (ret)
-			return ret;
-	}
 
 	ret = mi_stage_c(m, DT2A_C0Z, r, g, b);
 	if (ret)
@@ -157,23 +158,117 @@ static int mi_paint(struct mi_tm *m, u8 ledz, u8 r, u8 g, u8 b)
 	return ret;
 }
 
+/* Compute brightness-scaled colour from the LED classdev state. */
+static void mi_zone_rgb(struct mi_zone *z, u8 *r, u8 *g, u8 *b)
+{
+	struct led_classdev *led = &z->mc.led_cdev;
+	int bright = led->brightness;
+	int max = led->max_brightness;
+	if (!max) max = 255;
+	*r = z->mc.subled_info[0].intensity * bright / max;
+	*g = z->mc.subled_info[1].intensity * bright / max;
+	*b = z->mc.subled_info[2].intensity * bright / max;
+}
+
+/*
+ * mi_commit() – batch-paint all zones in one shot.
+ *
+ * Reads the brightness-scaled RGB directly from each zone's LED classdev
+ * state (subled_info[].intensity * brightness / max_brightness).  This
+ * works regardless of whether mi_brightness_set was called (the LED
+ * framework always stores intensities and brightness on write).
+ *
+ * If all zones share the same colour, stages C0Z once (and C1Z once for
+ * COLORFUL), then fires LightEffect on all 4 zones.  If colours differ,
+ * paints each zone individually but shares the single KBBR read and the
+ * single C1Z stage.
+ *
+ * Caller must hold m->lock.
+ */
+static int mi_commit(struct mi_tm *m)
+{
+	u8 kbbr, zr[NUM_ZONES], zg[NUM_ZONES], zb[NUM_ZONES];
+	int ret, i;
+	bool uniform = true;
+
+	ret = mi_read_kbbr(&kbbr);
+	if (ret)
+		return ret;
+	if (kbbr == 5)
+		return -ENXIO;
+
+	/* Read each zone's colour from LED classdev state. */
+	for (i = 0; i < NUM_ZONES; i++)
+		mi_zone_rgb(&m->zones[i], &zr[i], &zg[i], &zb[i]);
+
+	/* Check if all zones have the same colour. */
+	for (i = 1; i < NUM_ZONES; i++) {
+		if (zr[i] != zr[0] || zg[i] != zg[0] || zb[i] != zb[0]) {
+			uniform = false;
+			break;
+		}
+	}
+
+	if (m->effect == LETY_COLORFUL) {
+		ret = mi_stage_c(m, DT2A_C1Z, m->sec_r, m->sec_g, m->sec_b);
+		if (ret)
+			return ret;
+	}
+
+	if (uniform) {
+		/* Stage C0Z once, then fire all 4 zones. */
+		ret = mi_stage_c(m, DT2A_C0Z, zr[0], zg[0], zb[0]);
+		if (ret)
+			return ret;
+		for (i = 0; i < NUM_ZONES; i++) {
+			ret = mi_lighteffect(m, m->zones[i].ledz,
+					     LETY_STATIC, m->speed, kbbr);
+			if (ret)
+				return ret;
+		}
+		if (m->effect != LETY_STATIC) {
+			for (i = 0; i < NUM_ZONES; i++) {
+				ret = mi_lighteffect(m, m->zones[i].ledz,
+						     m->effect, m->speed, kbbr);
+				if (ret)
+					return ret;
+			}
+		}
+	} else {
+		/* Different colours per zone – paint one at a time. */
+		for (i = 0; i < NUM_ZONES; i++) {
+			ret = mi_paint_zone(m, m->zones[i].ledz,
+					    zr[i], zg[i], zb[i], kbbr);
+			if (ret)
+				return ret;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * Brightness-set callback – a no-op.
+ *
+ * The LED framework calls this for `brightness` writes but NOT for
+ * `multi_intensity` writes (the framework sets led_cdev->brightness
+ * before calling led_set_brightness, which matches the early-return
+ * check and skips our callback).
+ *
+ * Instead of relying on this callback to cache colours, mi_commit()
+ * reads the brightness-scaled RGB directly from the LED classdev state
+ * (subled_info[i].intensity * brightness / max_brightness).
+ *
+ * We still call led_mc_calc_color_components() here so the subled
+ * brightness values are coherent if anything reads them.
+ */
 static int mi_brightness_set(struct led_classdev *led_cdev,
 			     enum led_brightness brightness)
 {
 	struct led_classdev_mc *mc = lcdev_to_mccdev(led_cdev);
-	struct mi_zone *z = container_of(mc, struct mi_zone, mc);
-	struct mi_tm *m = dev_get_drvdata(led_cdev->dev->parent);
-	int ret;
 
 	led_mc_calc_color_components(mc, brightness);
-
-	mutex_lock(&m->lock);
-	ret = mi_paint(m, z->ledz,
-		       mc->subled_info[0].brightness,
-		       mc->subled_info[1].brightness,
-		       mc->subled_info[2].brightness);
-	mutex_unlock(&m->lock);
-	return ret;
+	return 0;
 }
 
 static ssize_t effect_show(struct device *dev, struct device_attribute *attr,
@@ -301,11 +396,40 @@ static ssize_t panel_brightness_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(panel_brightness);
 
+/*
+ * commit – batch-paint all zones from their stored colors.
+ * Write any positive integer to trigger an atomic commit.
+ *
+ * Without this, multi_intensity / brightness writes only store
+ * values; nothing hits the EC until commit is written.
+ */
+static ssize_t commit_store(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	struct mi_tm *m = dev_get_drvdata(dev);
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+	if (val == 0)
+		return -EINVAL;
+
+	mutex_lock(&m->lock);
+	ret = mi_commit(m);
+	mutex_unlock(&m->lock);
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_WO(commit);
+
 static struct attribute *mi_attrs[] = {
 	&dev_attr_effect.attr,
 	&dev_attr_speed.attr,
 	&dev_attr_secondary_color.attr,
 	&dev_attr_panel_brightness.attr,
+	&dev_attr_commit.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(mi);
@@ -334,6 +458,7 @@ static int mi_zone_init(struct mi_tm *m, int idx)
 
 	led->name = name;
 	led->max_brightness = 255;
+	led->brightness = 255;  /* default: max, so first multi_intensity write updates brightness */
 	led->brightness_set_blocking = mi_brightness_set;
 
 	return devm_led_classdev_multicolor_register(&m->wdev->dev, &z->mc);

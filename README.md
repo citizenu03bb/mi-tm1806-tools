@@ -1,11 +1,18 @@
 # mi-tm1806-tools
 
-Linux user-space tools for the Xiaomi Mi Gaming Laptop 15.6 (TIMI **TM1806**, 2019).
+Linux tools for the Xiaomi Mi Gaming Laptop 15.6 (TIMI **TM1806**, 2019).
 
-Two pieces:
+Four pieces, from lowest to highest level:
 
-- **`hotkey/`** — Python daemon that wires up the M1–M5 + Fan macro keys via ACPI WMI events (these keys never reach `/dev/input`).
-- **`rgbkb/`** — Bash CLI for the 4-zone keyboard backlight via ACPI WSAA, with a Fn-bypass trick that lets you change colors and modes.
+- **`driver/`** — Linux kernel module. Registers the 4-zone keyboard as `/sys/class/leds/mi_tm1806::kbd_*` with a **store-and-commit** model for flicker-free updates and sysfs interface.
+- **`rgbkb/`** — Bash CLI. Paints colours and firmware effects via `/proc/acpi/call` (acpi_call).
+- **`effects/`** — Preset launcher + visual editor. 7 built-in flashy effects, a JSON preset system, and a PyQt5 GUI for composing per-zone colour sequences.
+- **`hotkey/`** — Python daemon that wires M1–M5 + Fan macro keys via ACPI WMI events (these keys never reach `/dev/input`).
+
+Plus two integrations:
+
+- **`integrations/openrgb-plugin/`** — OpenRGB plugin: the keyboard appears alongside USB peripherals in the OpenRGB GUI, with a preset-player tab.
+- **`integrations/claude-code/`** — Claude Code hook that uses the bar zone as a session-status indicator.
 
 This is documentation for hackers who own this exact hardware and want to control it from Linux. It is not a general-purpose utility.
 
@@ -18,20 +25,37 @@ But the firmware on the Quanta-built Mi laptop speaks a **different protocol**: 
 
 ## Requirements
 
-- Linux 6.10+ (for `/dev/mem` mmap of EMEM under `STRICT_DEVMEM`; the region is exposed in `/proc/iomem` as `pnp 00:01`)
-- `acpi_call` DKMS module loaded (used to invoke `\_SB_.MIAP.WSAA`)
-- root (acpi_call's `/proc/acpi/call` is mode-600 root, EMEM mmap needs CAP_SYS_RAWIO)
-- Secure Boot disabled, OR `acpi_call.ko` signed with an MOK-enrolled key
-- Python 3.10+ with `python3-evdev` (for the hotkey daemon's optional `key` action type, uinput injection)
+- Linux 6.10+ (for `/dev/mem` mmap of EMEM under `STRICT_DEVMEM`, and for kernel-module build)
+- `acpi_call` DKMS module loaded (for the Bash CLI and hotkey daemon; not needed for the kernel driver)
+- root (acpi_call's `/proc/acpi/call` is mode-600 root; EMEM mmap needs CAP_SYS_RAWIO; kernel module insmod/rmmod needs root)
+- Secure Boot disabled, OR modules signed with an MOK-enrolled key
+- Python 3.10+, `python3-evdev` (for hotkey daemon), `python3-pyqt5` (for effects editor)
 - `acpid` (for the hotkey daemon — provides `acpi_listen` to receive WMI events as netlink messages)
-
-The tools are tested on TM1806 with BIOS XMGCF5R0P0202. Other TIMI models (TM1807, TM1900) have different DSDTs and are **not** supported; see "Hardware-specific" under "Known limitations" below.
 
 ## Usage
 
+### Kernel driver (`driver/`)
+
+Flicker-free store-and-commit model. All writes are buffered; a single `commit` attribute batch-paints all zones simultaneously:
+
+```sh
+cd driver && make && sudo insmod mi-tm1806-led.ko
+
+# Write colours (no EC calls, no flicker)
+echo '255 0 0' | sudo tee /sys/class/leds/mi_tm1806::kbd_*/multi_intensity
+
+# Configure effect + speed
+echo 2 | sudo tee /sys/bus/wmi/devices/E2A89D40-*/effect
+
+# Atomically paint all 4 zones — no sequential wipe
+echo 1 | sudo tee /sys/bus/wmi/devices/E2A89D40-*/commit
+```
+
+See [`driver/README.md`](driver/README.md) for full usage, DKMS setup, and design rationale.
+
 ### Backlight CLI (`rgbkb/`)
 
-The CLI is a single Bash script with no install step required. From the repo root:
+The CLI is a single Bash script. From the repo root:
 
 ```
 sudo ./rgbkb/rgbkb solid     red
@@ -43,59 +67,71 @@ sudo ./rgbkb/rgbkb brightness 2          # 0=max, 5=off
 sudo ./rgbkb/rgbkb status                # dump EC state
 ```
 
-If you want it on `$PATH`, symlink `~/bin/rgbkb -> /path/to/repo/rgbkb/rgbkb` or copy it to `/usr/local/bin/`.
+### Effects (`effects/`)
 
-Zones: `bar` (LEDZ=04, hotkey strip on the left), `kb-left`, `kb-mid`, `kb-right` (LEDZ=05/06/07).
+Flashy presets and a visual composer:
 
-Colors by name: `red green blue yellow cyan magenta white orange purple pink black/off`, or 6-hex `RRGGBB`.
+```sh
+# Built-in effects
+sudo ./effects/rgbkb-effects rainbow   # spectrum cycle
+sudo ./effects/rgbkb-effects police    # red/blue alternating zones
+sudo ./effects/rgbkb-effects disco     # random colours + modes
+sudo ./effects/rgbkb-effects all       # cycle through all 7 effects
+
+# Custom presets
+sudo ./effects/rgbkb-effects preset my-effect
+
+# Visual editor
+python3 ./effects/editor.py
+```
+
+See [`effects/README.md`](effects/README.md) for full documentation.
 
 ### Macro-key daemon (`hotkey/`)
 
-ACPI WMI-driven. The daemon also depends on `acpi_call` (it calls `\_SB_.MIAP._WED(0x80)` to read each event's per-key payload, since the Linux WMI bus doesn't surface EventDetail to userspace for unbound GUIDs).
-
-Set up the config and install the unit:
-
-```
-cp hotkey/config.example.toml hotkey/config.toml
-$EDITOR hotkey/config.toml
-sudo cp hotkey/mi-hotkey.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now mi-hotkey.service
-journalctl -u mi-hotkey.service -f
-```
-
-Maps M1–M5 (the 5 keys at the far left of the keyboard) and the Fan key. EVT0 group code is checked so Fn+brightness presses (which fire the same notify code) are not misdispatched.
+See [`hotkey/README.md`](hotkey/README.md) for setup.
 
 ## Known limitations
 
-- **Panel can't be woken from `KBBR=5` by software.** Press Fn+keyboard-brightness once after a cold boot; after that, software controls everything.
-- **`brightness` and KBBR-mode interaction.** Once you've issued any FB00/0100 LightEffect, the painter is in KBBR-driven brightness mode and the LEBR-sweep brightness control is silently ignored until reboot. `rgbkb brightness` reads KBBR and warns when this happens.
+- **Panel can't be woken from `KBBR=5` by software.** Press Fn+keyboard-brightness once after a cold boot; after that, everything works.
 - **Hardware-specific.** Tested only on TM1806 with BIOS XMGCF5R0P0202. The WMI GUID, EMEM physical address, KBBR offset, and zone mapping are all DSDT-derived and may differ on other TIMI models or after a BIOS update.
-- **Acpi_call dependency.** The kernel's wmi-bus exposes the device but does not provide a userspace write interface for `setable` data blocks (the kernel's sysfs attribute is spelled that way) at the kernel versions tested. Future direction: replace the userspace stack with a small WMI bus driver in C; see `docs/architecture.md`.
-
-## Credits
-
-- **chocapikk** — broader ITE 8910 reverse-engineering blog post (XMG/Clevo flavor); useful background even though the protocol differs.
-- **TUXEDO drivers** team — `ite_829x` binding logic informed the early HID-path investigations (which turned out to be a dead end on Quanta firmware, but the reading list was right).
 
 ## Layout
 
 ```
-hotkey/                  Python ACPI-WMI daemon for M1–M5 + Fan keys
-  daemon.py              the daemon
-  config.example.toml    template (copy to config.toml and edit)
-  mi-hotkey.service      systemd unit
+driver/                  Linux kernel module (LED classdev + WMI)
+  mi-tm1806-led.c
+  Makefile / dkms.conf
   README.md
 
 rgbkb/                   Bash CLI for the 4-zone backlight
   rgbkb                  the CLI
-  tools/                 diagnostic + validation scripts (incl. paint_no_fn.sh)
+  tools/                 diagnostic + validation scripts
   README.md
+
+effects/                 Preset launcher + visual editor
+  rgbkb-effects          7 built-in effects + preset player
+  editor.py              PyQt5 visual composer
+  presets/               JSON preset files
+  README.md
+
+hotkey/                  Python ACPI-WMI daemon for M1–M5 + Fan keys
+  daemon.py / README.md
+
+integrations/
+  openrgb-plugin/        OpenRGB plugin (device + preset-player tab)
+  claude-code/           Claude Code keyboard status indicator
 
 docs/
   architecture.md        how the WSAA protocol is wired together
   DSDT-extracts.md       relevant _Q-handlers, MIAP namespace, EMEM regions
 ```
+
+## Credits
+
+- **chocapikk** — broader ITE 8910 reverse-engineering blog post (XMG/Clevo flavor)
+- **TUXEDO drivers** team — `ite_829x` binding logic
+- **OpenRGB** — CalcProgrammer1's cross-platform RGB control
 
 ## Status
 

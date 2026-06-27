@@ -1,0 +1,284 @@
+#!/bin/bash
+# rgbkb-effects — flashy keyboard backlight effects for the Xiaomi Mi Gaming Laptop.
+#
+# Usage (run as root):
+#   sudo ./effects/rgbkb-effects rainbow   # smooth rainbow cycle (colorful)
+#   sudo ./effects/rgbkb-effects police    # red/blue alternating zones
+#   sudo ./effects/rgbkb-effects matrix    # breathing green (Matrix style)
+#   sudo ./effects/rgbkb-effects disco     # rapid random colors
+#   sudo ./effects/rgbkb-effects pulse     # breathing with colour cycling
+#   sudo ./effects/rgbkb-effects fire      # warm fire-like glow
+#   sudo ./effects/rgbkb-effects wave      # wave with cycling colours
+#   sudo ./effects/rgbkb-effects all       # cycle through all effects
+#
+# Ctrl+C to stop — restores static green automatically.
+
+# We may be run via sudo, so find rgbkb relative to this script's location.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RGBKB="$SCRIPT_DIR/../rgbkb/rgbkb"
+
+RESTORE_COLOR="green"
+
+cleanup() {
+    echo
+    "$RGBKB" solid "$RESTORE_COLOR" >/dev/null 2>&1 || true
+    echo "  Keyboard restored to $RESTORE_COLOR."
+    exit 0
+}
+trap cleanup SIGINT SIGTERM
+
+banner() {
+    local name="$1"; shift
+    printf '\n  \033[1;36m▓▓▓ %s ▓▓▓\033[0m\n' "$name"
+    printf '  \033[2m%s\033[0m\n\n' "$*"
+}
+
+# --- Helpers -----------------------------------------------------------
+
+complement() {
+    local h="${1#0x}"; h="${h//\#/}"
+    local r=$((16#${h:0:2})) g=$((16#${h:2:2})) b=$((16#${h:4:2}))
+    r=$((255 - r)); g=$((255 - g)); b=$((255 - b))
+    printf '%02X%02X%02X' "$r" "$g" "$b"
+}
+
+bright() {
+    # Fade a hex colour toward white (for a subtle "bright" accent)
+    local h="${1#0x}"; h="${h//\#/}"
+    local r=$((16#${h:0:2})) g=$((16#${h:2:2})) b=$((16#${h:4:2}))
+    r=$(( (r + 100 > 255) ? 255 : r + 100 ))
+    g=$(( (g + 100 > 255) ? 255 : g + 100 ))
+    b=$(( (b + 100 > 255) ? 255 : b + 100 ))
+    printf '%02X%02X%02X' "$r" "$g" "$b"
+}
+
+# --- Effects -----------------------------------------------------------
+
+rainbow() {
+    banner "RAINBOW CYCLE" "Fades through full spectrum — shows off 'colorful' firmware effect"
+    local colors=( FF0000 FF4000 FF8000 FFBF00 FFFF00 80FF00 40FF00
+                   00FF00 00FF40 00FF80 00FFFF 0080FF 0040FF
+                   0000FF 4000FF 8000FF BF00FF FF00FF FF00BF
+                   FF0080 FF0040 FF0000 )
+
+    while true; do
+        for c in "${colors[@]}"; do
+            "$RGBKB" colorful "0x$c" "$(complement "$c")" --speed 1 >/dev/null 2>&1 || true
+            sleep 0.30
+        done
+    done
+}
+
+police() {
+    banner "POLICE LIGHTS" "Red/blue alternating across zones. Classic."
+
+    while true; do
+        "$RGBKB" zone bar     red    >/dev/null 2>&1 || true
+        "$RGBKB" zone kb-left blue   >/dev/null 2>&1 || true
+        "$RGBKB" zone kb-mid  red    >/dev/null 2>&1 || true
+        "$RGBKB" zone kb-right blue  >/dev/null 2>&1 || true
+        sleep 0.35
+
+        "$RGBKB" zone bar     blue   >/dev/null 2>&1 || true
+        "$RGBKB" zone kb-left red    >/dev/null 2>&1 || true
+        "$RGBKB" zone kb-mid  blue   >/dev/null 2>&1 || true
+        "$RGBKB" zone kb-right red   >/dev/null 2>&1 || true
+        sleep 0.35
+    done
+}
+
+matrix() {
+    banner "MATRIX" "Breathing green with occasional 'code rain' flickers"
+    "$RGBKB" breath "0x00FF00" --speed 0 >/dev/null 2>&1 || true
+    local zones=(bar kb-left kb-mid kb-right)
+
+    while true; do
+        # Ambient breath
+        "$RGBKB" breath "0x00FF00" --speed 0 >/dev/null 2>&1 || true
+        sleep 1.5
+
+        # Brief "code rain" flicker on random zone
+        local i=$((RANDOM % 4))
+        local brightness=$((RANDOM % 80 + 120))
+        local g=$(printf '%02X' "$brightness")
+        "$RGBKB" zone "${zones[$i]}" "0x00${g}00" >/dev/null 2>&1 || true
+        sleep 0.06
+        "$RGBKB" zone "${zones[$i]}" "0x00FF00" >/dev/null 2>&1 || true
+        sleep 0.06
+    done
+}
+
+disco() {
+    banner "DISCO PARTY" "Random colours + modes. The strobe can be intense — teens will love it."
+
+    local colors=(FF0000 00FF00 0000FF FFFF00 FF00FF 00FFFF
+                  FF8000 FF0080 80FF00 8000FF 00FF80 0080FF
+                  FFFFFF FF4000 40FF00 0040FF)
+
+    local modes=(solid colorful wave breath)
+    local speeds=(0 1 2)
+
+    while true; do
+        local c1=${colors[$((RANDOM % ${#colors[@]}))]}
+        local c2=${colors[$((RANDOM % ${#colors[@]}))]}
+        local mode=${modes[$((RANDOM % ${#modes[@]}))]}
+        local spd=${speeds[$((RANDOM % ${#speeds[@]}))]}
+
+        case "$mode" in
+            colorful)
+                "$RGBKB" colorful "0x${c1}" "0x${c2}" --speed "$spd" >/dev/null 2>&1 || true ;;
+            wave)
+                "$RGBKB" wave "0x${c1}" --speed "$spd" >/dev/null 2>&1 || true ;;
+            breath)
+                "$RGBKB" breath "0x${c1}" --speed "$spd" >/dev/null 2>&1 || true ;;
+            *)
+                "$RGBKB" solid "0x${c1}" >/dev/null 2>&1 || true ;;
+        esac
+        sleep 0.35
+    done
+}
+
+pulse() {
+    banner "PULSE" "Slow-breathing that shifts colour with each cycle"
+    local colors=(FF2200 FF4400 FF6600 FF8800 FFFF00 44FF00 00FF22
+                  00FF88 00FFFF 0044FF 2200FF 8800FF FF00FF)
+
+    while true; do
+        for c in "${colors[@]}"; do
+            "$RGBKB" breath "0x${c}" --speed 1 >/dev/null 2>&1 || true
+            sleep 0.8
+        done
+    done
+}
+
+fire() {
+    banner "FIRE" "Warm amber/orange flicker — a convincing fire glow"
+    local colors=(FF1000 FF2000 FF3000 FF3500 FF4000 FF5000
+                  FF6000 FF7000 FF8000 FF9000 FF8000 FF6000
+                  FF4000 FF3000 FF2000 FF4000 FF6000 FF8000
+                  FF7000 FF5000 FF3000 FF4000 FF5000 FF6000)
+
+    while true; do
+        for c in "${colors[@]}"; do
+            "$RGBKB" solid "0x${c}" >/dev/null 2>&1 || true
+            sleep 0.06
+        done
+    done
+}
+
+wave_effect() {
+    banner "WAVE CYCLE" "Firmware wave effect with slowly shifting colour"
+    local colors=(FF0000 FF00FF 0000FF 00FFFF 00FF00 FFFF00 FF8000 FF4000)
+
+    while true; do
+        for c in "${colors[@]}"; do
+            "$RGBKB" wave "0x${c}" --speed 1 >/dev/null 2>&1 || true
+            sleep 1.0
+        done
+    done
+}
+
+all() {
+    local effects=(rainbow police matrix disco pulse fire wave)
+    for e in "${effects[@]}"; do
+        echo "  → $e (5 seconds)..."
+        timeout 5 "$SCRIPT_DIR/rgbkb-effects" "$e" 2>/dev/null || true
+        sleep 0.3
+    done
+    echo "  → Restarting cycle..."
+    exec "$SCRIPT_DIR/rgbkb-effects" all
+}
+
+# --- Preset player (loads JSON presets from the editor) -------------
+
+play_preset() {
+    local name="$1"
+    local path="$SCRIPT_DIR/presets/${name}.json"
+    if [ ! -f "$path" ]; then
+        echo "Preset not found: $name (looked at $path)" >&2
+        echo "Available:" && ls "$SCRIPT_DIR/presets"/*.json 2>/dev/null | while read f; do echo "  $(basename "$f" .json)"; done
+        exit 1
+    fi
+    export RGBKB_PATH="$RGBKB"
+    export PRESET_PATH="$path"
+    python3 -c "
+import json, os, subprocess, sys, time, signal
+
+def cleanup(sig, frame):
+    subprocess.run([rgbkb, 'solid', 'green'], capture_output=True, timeout=5)
+    print()
+    sys.exit(0)
+signal.signal(signal.SIGINT, cleanup)
+signal.signal(signal.SIGTERM, cleanup)
+
+rgbkb = os.environ['RGBKB_PATH']
+with open(os.environ['PRESET_PATH']) as f:
+    data = json.load(f)
+
+effect = data.get('effect', 'static')
+speed = str(data.get('speed', 2))
+sec_color = data.get('secondary', None)
+frames = data.get('frames', [])
+zones = ['bar', 'kb-left', 'kb-mid', 'kb-right']
+
+while True:
+    for frame in frames:
+        colours = frame['zones']
+        dur = frame.get('duration', 0.5)
+        c0 = '0x' + colours[0]
+
+        # Auto-compute complement for colorful if no secondary given
+        secondary = sec_color
+        if effect == 'colorful' and not secondary:
+            r = int(colours[0][0:2], 16); g = int(colours[0][2:4], 16); b = int(colours[0][4:6], 16)
+            secondary = f'{255-r:02X}{255-g:02X}{255-b:02X}'
+
+        if len(set(colours)) == 1:
+            if effect == 'colorful' and sec_color:
+                subprocess.run([rgbkb, 'colorful', c0, '0x'+sec_color,
+                                '--speed', speed], capture_output=True, timeout=10)
+            elif effect in ('breath', 'wave'):
+                subprocess.run([rgbkb, effect, c0, '--speed', speed],
+                               capture_output=True, timeout=10)
+            else:
+                subprocess.run([rgbkb, 'solid', c0], capture_output=True, timeout=10)
+        else:
+            for i, z in enumerate(zones):
+                subprocess.run([rgbkb, 'zone', z, '0x'+colours[i]],
+                               capture_output=True, timeout=10)
+        time.sleep(dur)
+" || true
+}
+
+# --- Main --------------------------------------------------------------
+
+[ "$(id -u)" -eq 0 ] || { echo "rgbkb-effects: must run as root (sudo)" >&2; exit 1; }
+
+case "${1:-}" in
+    rainbow)     rainbow ;;
+    police)      police ;;
+    matrix)      matrix ;;
+    disco)       disco ;;
+    pulse)       pulse ;;
+    fire)        fire ;;
+    wave)        wave_effect ;;
+    preset)      play_preset "${2:-}" ;;
+    all)         all ;;
+    *)
+        echo "Usage: sudo $0 {rainbow|police|matrix|disco|pulse|fire|wave|preset <name>|all}"
+        echo ""
+        echo "  rainbow   — spectrum cycle (colorful)"
+        echo "  police    — alternating red/blue zones"
+        echo "  matrix    — breathing green + code flickers"
+        echo "  disco     — random colours and modes"
+        echo "  pulse     — breathing colour shift"
+        echo "  fire      — warm amber flicker"
+        echo "  wave      — wave with cycling colour"
+        echo "  preset N  — play a preset from effects/presets/N.json"
+        echo "  all       — cycle through all effects"
+        echo ""
+        echo "  Create/edit presets with:  python3 effects/editor.py"
+        echo "  Ctrl+C to stop (restores green)."
+        exit 1
+        ;;
+esac

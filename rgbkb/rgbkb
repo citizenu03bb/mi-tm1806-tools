@@ -151,21 +151,21 @@ stage_c() {
 # pass to switch to the animated mode. (DSDT confirms FB00/0100 reads only
 # LETY/LSPD/LEBR/LEDZ from the buffer — there's no per-mode color parameter.)
 #
-# C0Z is broadcast to all 4 zones under LETY=01. C1Z is the second color for
-# LETY=04 (COLORFUL). C2Z..C7Z are write-only mirrors the firmware doesn't read,
-# but we stage them to keep state predictable across mode changes.
+# C0Z is broadcast to all 4 zones under LETY=01 — the only C-reg the static
+# painter reads (test_a2_ledz_creg_map.sh confirmed this). C1Z is the second
+# color for LETY=04 (COLORFUL). C2Z..C7Z are write-only mirrors the firmware
+# doesn't read, so we skip them entirely.
 apply_uniform() {
     local lety="$1" r1="$2" g1="$3" b1="$4" r2="${5:-}" g2="${6:-}" b2="${7:-}"
     require_panel_on
     local LEBR=$(read_kbbr_hex)
 
-    for dt2a in 01 02 03 04 05 06 07 08; do
-        if [ "$lety" = "04" ] && [ "$dt2a" = "02" ] && [ -n "$r2" ]; then
-            stage_c $dt2a $r2 $g2 $b2
-        else
-            stage_c $dt2a $r1 $g1 $b1
-        fi
-    done
+    # Stage C0Z (paint source) — only C-reg the static painter reads
+    stage_c 01 $r1 $g1 $b1
+    # Stage C1Z (second color for COLORFUL) if needed
+    if [ "$lety" = "04" ] && [ -n "$r2" ]; then
+        stage_c 02 $r2 $g2 $b2
+    fi
 
     # Always paint static first (LETY=01) so C-regs are consumed and the
     # panel shows the new color. Then if a non-static mode was requested,

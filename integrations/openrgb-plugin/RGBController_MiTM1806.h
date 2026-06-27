@@ -37,4 +37,5 @@ private:
     void        WriteEffect(unsigned int lety_value);
     void        WriteSpeed(unsigned int lspd_value);
     void        WriteSecondaryColor(RGBColor color);
+    void        WriteCommit();
 };

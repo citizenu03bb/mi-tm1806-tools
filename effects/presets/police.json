@@ -1,0 +1,10 @@
+{
+  "effect": "static",
+  "speed": 2,
+  "frames": [
+    {"zones": ["FF0000", "FF0000", "FF0000", "FF0000"], "duration": 0.35},
+    {"zones": ["FF0000", "0000FF", "FF0000", "0000FF"], "duration": 0.15},
+    {"zones": ["0000FF", "0000FF", "0000FF", "0000FF"], "duration": 0.35},
+    {"zones": ["0000FF", "FF0000", "0000FF", "FF0000"], "duration": 0.15}
+  ]
+}

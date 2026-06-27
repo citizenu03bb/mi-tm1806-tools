@@ -17,4 +17,4 @@ ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="mi_tm1806::*", \
 # the udev `bind` action is what fires AFTER they exist — `add` fires too
 # early (driver hasn't bound yet, attrs don't exist, chmod silently fails).
 ACTION=="add|change|bind", SUBSYSTEM=="wmi", KERNEL=="E2A89D40-784F-4E91-BE22-AE373CDEA97A", \
-	RUN+="/bin/sh -c 'cd %S%p && chgrp plugdev effect speed secondary_color panel_brightness 2>/dev/null; chmod g+w effect speed secondary_color panel_brightness 2>/dev/null'"
+	RUN+="/bin/sh -c 'cd %S%p && chgrp plugdev effect speed secondary_color panel_brightness commit 2>/dev/null; chmod g+w effect speed secondary_color panel_brightness commit 2>/dev/null'"

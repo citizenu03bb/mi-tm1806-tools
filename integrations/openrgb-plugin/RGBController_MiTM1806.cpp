@@ -46,6 +46,11 @@ static bool sysfs_write(const std::string& path, const std::string& value)
     return f.good();
 }
 
+void RGBController_MiTM1806::WriteCommit()
+{
+    sysfs_write(std::string(WMI_DEV_PATH) + "/commit", "1");
+}
+
 static std::string led_path(unsigned int zone_idx, const char* attr)
 {
     char buf[256];
@@ -236,6 +241,7 @@ void RGBController_MiTM1806::DeviceUpdateLEDs()
             WriteZoneColor(z, colors[z]);
         }
     }
+    WriteCommit();
 }
 
 void RGBController_MiTM1806::UpdateZoneLEDs(int zone_idx)
@@ -286,9 +292,10 @@ void RGBController_MiTM1806::DeviceUpdateMode()
         {
             WriteZoneColor(z, modes[active_mode].colors[0]);
         }
+        WriteCommit();
     }
     else
     {
-        DeviceUpdateLEDs();
+        DeviceUpdateLEDs();  /* calls WriteCommit internally */
     }
 }

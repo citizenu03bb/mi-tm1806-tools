@@ -27,3 +27,4 @@ Module.symvers
 moc_*
 .qmake.stash
 integrations/openrgb-plugin/Makefile
+.playwright-cli/

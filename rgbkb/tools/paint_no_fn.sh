@@ -48,13 +48,11 @@ fi
 LEBR=$(printf '%02X' "$KBBR")
 echo "  using LEBR=$LEBR (matches current KBBR — won't blank)"
 
-# Stage colors in C0Z..C7Z
-for DT2A in 01 02 03 04 05 06 07 08; do
-    BUF=$(mk_buf 00 FB 01 01 $DT2A 02 00 00 $R $G $B 00)
-    echo "\\_SB_.MIAP.WSAA 0x0 $BUF" > /proc/acpi/call
-    tr -d '\0' < /proc/acpi/call > /dev/null
-done
-echo "  staged colors in C0Z..C7Z"
+# Stage color in C0Z (only C-reg the static painter reads)
+BUF=$(mk_buf 00 FB 01 01 01 02 00 00 $R $G $B 00)
+echo "\\_SB_.MIAP.WSAA 0x0 $BUF" > /proc/acpi/call
+tr -d '\0' < /proc/acpi/call > /dev/null
+echo "  staged color in C0Z (only C-reg the painter reads)"
 
 # Trigger paint on the 4 keyboard zones with LEBR=current
 for LEDZ in 04 05 06 07; do

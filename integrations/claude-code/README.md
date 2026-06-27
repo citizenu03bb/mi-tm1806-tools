@@ -75,9 +75,10 @@ The script checks both env var and marker file before doing anything.
 
 ## Trade-offs to know about
 
-- **All paints stop the global animation.** The Mi firmware has one `LETY` register shared across zones (see `driver/README.md`). The hook script does NOT change `effect`, only `multi_intensity` and `brightness` — so left/mid/right keep whatever animation you set. But the **bar** zone will display its new static color until you switch effect manually.
-- **Hook latency on tool calls.** `PreToolUse` is sync. The bar paint is ~30 ms (one `acpi_evaluate_integer` for KBBR + one WMI write for stage_c + one for LightEffect). On most workloads this is invisible; in tight tool-call loops it adds up. If it gets annoying, you can drop the `PreToolUse` / `PostToolUse` entries from settings.json and keep just the higher-signal ones (`Notification`, `Stop`, `SessionStart`).
-- **Cold-boot panel-off case.** If `KBBR=5` (panel power-gated, requires Fn+brightness once to wake), the kernel driver returns `-ENXIO` from every `multi_intensity` write. The hook script silently ignores write failures — no errors propagated to the Claude Code session.
+- **Store-and-commit model.** The kernel driver now uses a store-and-commit brightness model (see `driver/README.md`). Writing to `multi_intensity` or `brightness` only stores the colour in memory; the script calls `echo 1 > $WMI/commit` once after each paint to batch-paint all zones. This means the bar update repaints **all 4 zones** from their driver-stored values — it won't erase other zones as long as you configured them via the driver (not the bash CLI).
+- **All paints stop the global animation.** The Mi firmware has one `LETY` register shared across zones. The hook script does NOT change `effect`, only `multi_intensity`, `brightness`, and `commit` — so left/mid/right keep whatever animation or colour they had before the commit.
+- **Hook latency on tool calls.** Each paint is one `commit` sysfs write (kernel does ~4 WSAA calls in-kernel, no userspace ACPI round-trips). Sub-millisecond from the hook's perspective.
+- **Cold-boot panel-off case.** If `KBBR=5` (panel power-gated, requires Fn+brightness once to wake), the kernel driver returns `-ENXIO` from the commit. The hook script silently ignores write failures — no errors propagated to the Claude Code session.
 
 ## Future-work ideas (not built)
 

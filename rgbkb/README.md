@@ -36,6 +36,8 @@ Call: `\_SB_.MIAP.WSAA 0x0 {buf}` via `/proc/acpi/call`.
 
 So per-zone diversity comes from sequencing — stage `C0Z=color1`, paint LEDZ=04; stage `C0Z=color2`, paint LEDZ=05; etc. Each LEDZ paint snapshots `C0Z` into that zone's persistent state in EC SRAM.
 
+Staging C2Z–C7Z is unnecessary; the CLI only stages C0Z (and C1Z for COLORFUL). This halves the number of WSAA calls compared to the original all-8 approach.
+
 ## Recovery
 
 - **Backlight goes dark unexpectedly**: press `Fn + keyboard-brightness` once. The EC re-arms `KBBL`/`KBIT` and re-paints from its internal SRAM. Software recovery via `wsaa_recover.sh`-style writes is **not** reliable; prefer the hardware key.
