@@ -55,7 +55,8 @@ Acceptance criteria:
 ## P1: Non-Hardware Test Suite
 
 Status: initial `unittest` coverage exists for color parsing, frame validation,
-fake sysfs reads, and doctor success/failure behavior.
+fake sysfs reads/writes, doctor success/failure behavior, and hotkey event
+gating.
 
 Goal: test public-facing glue on any Linux machine without TM1806 hardware,
 root, `/sys`, `/proc/acpi/call`, OpenRGB, PipeWire, or the physical keyboard.
