@@ -53,6 +53,15 @@ echo 1 | sudo tee /sys/bus/wmi/devices/E2A89D40-*/commit
 
 See [`driver/README.md`](driver/README.md) for full usage, DKMS setup, and design rationale.
 
+For DKMS install/removal, the repo provides explicit root-only helpers:
+
+```sh
+sudo ./scripts/install-dkms.sh
+sudo ./scripts/uninstall-dkms.sh
+sudo ./scripts/install-udev.sh
+sudo ./scripts/install-hotkey.sh
+```
+
 ### Diagnostics
 
 Before filing an issue, run the kernel-driver diagnostic:

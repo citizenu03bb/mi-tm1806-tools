@@ -16,6 +16,13 @@ python3 -m py_compile \
 python3 -m unittest discover
 
 bash -n \
+  scripts/check.sh \
+  scripts/install-dkms.sh \
+  scripts/install-hotkey.sh \
+  scripts/install-udev.sh \
+  scripts/uninstall-dkms.sh \
+  scripts/uninstall-hotkey.sh \
+  scripts/uninstall-udev.sh \
   effects/rgbkb-effects \
   rgbkb/rgbkb \
   integrations/claude-code/keyboard-status.sh
@@ -24,7 +31,11 @@ python3 - <<'PY'
 import subprocess
 import sys
 
-bad = ["/home/" + "pat", "not yet on GitHub", "Future direction: kernel module"]
+bad = [
+    "/home/" + "pat",
+    "not yet on " + "GitHub",
+    "Future direction: kernel " + "module",
+]
 files = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
 failed = False
 for path in files:

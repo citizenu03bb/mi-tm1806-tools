@@ -15,13 +15,10 @@ See the [top-level README](../README.md) for context, requirements, and the bigg
 ## Install
 
 ```sh
-sudo install -m 0755 daemon.py        /usr/local/bin/mi-hotkey-daemon
-sudo install -m 0644 mi-hotkey.service /etc/systemd/system/mi-hotkey.service
-sudo mkdir -p /etc/mi-hotkey
-sudo install -m 0644 config.example.toml /etc/mi-hotkey/config.toml   # initial system default; edit
-sudo systemctl daemon-reload
-sudo systemctl enable --now mi-hotkey
+sudo ../scripts/install-hotkey.sh
 ```
+
+To remove the daemon and systemd unit while keeping configs: `sudo ../scripts/uninstall-hotkey.sh`.
 
 ## Configuration
 

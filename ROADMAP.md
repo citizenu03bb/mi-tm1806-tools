@@ -112,6 +112,8 @@ Acceptance criteria:
 
 ## P3: Installer/Packaging Pass
 
+Status: initial explicit DKMS, udev, and hotkey install/uninstall helpers exist.
+
 Goal: reduce manual setup once the diagnostic and test foundations are stable.
 
 - Add documented install/uninstall targets or helper scripts for DKMS, udev

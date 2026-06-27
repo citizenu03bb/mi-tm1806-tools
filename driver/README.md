@@ -95,12 +95,10 @@ A manual `make modules_install` puts the module under `/lib/modules/$(uname -r)/
 
 ```sh
 # one-time registration, then DKMS rebuilds on every kernel update
-sudo cp -r . /usr/src/mi-tm1806-led-0.1
-sudo dkms add -m mi-tm1806-led -v 0.1
-sudo dkms install -m mi-tm1806-led -v 0.1
+sudo ../scripts/install-dkms.sh
 ```
 
-To remove: `sudo dkms remove -m mi-tm1806-led -v 0.1 --all && sudo rm -rf /usr/src/mi-tm1806-led-0.1`.
+To remove: `sudo ../scripts/uninstall-dkms.sh`.
 
 If `AUTOINSTALL="yes"` in `dkms.conf` and `dkms autoinstall` runs as part of your kernel-update hooks (default on Debian/Ubuntu), the module is rebuilt for each new kernel without manual action.
 

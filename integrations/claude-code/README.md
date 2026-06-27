@@ -28,12 +28,14 @@ Three steps. None automatic.
 ### 1. udev rule (so the user can write to sysfs without sudo)
 
 ```sh
-sudo cp 99-mi-tm1806-led.rules /etc/udev/rules.d/
-sudo udevadm control --reload
-sudo rmmod mi_tm1806_led && sudo modprobe mi_tm1806_led
+sudo ../../scripts/install-udev.sh
 ```
 
-That second command reloads the driver so the new udev rule fires the `add` action and chgrps the sysfs files to `plugdev`. (`udevadm trigger` alone won't re-fire `add` for an existing device on every kernel.)
+If permissions do not update, reload the driver so the udev rule fires on fresh sysfs nodes:
+
+```sh
+sudo modprobe -r mi_tm1806_led && sudo modprobe mi_tm1806_led
+```
 
 Verify:
 
