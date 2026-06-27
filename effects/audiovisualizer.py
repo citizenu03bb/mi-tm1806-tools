@@ -81,7 +81,13 @@ def commit():
     """Batch-paint all stored zone colours to the EC in one ACPI call."""
     sysfs(f"{WMI_DEV}/commit", "1")
 
+_cleaned = False
+
 def cleanup(sig=None, frame=None):
+    global _cleaned
+    if _cleaned:          # idempotent: signal + finally must not double-paint
+        return
+    _cleaned = True
     paint_uniform(0, 255, 0)
     commit()
     print("\n  Restored to green.")
@@ -317,4 +323,8 @@ if __name__ == "__main__":
         modes[mode]()
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
+    finally:
+        # Also reached on a *clean* return — e.g. pw-cat dropped and the read
+        # loop broke. Without this the keyboard freezes on the last colour
+        # instead of restoring green. cleanup() is idempotent.
         cleanup()
