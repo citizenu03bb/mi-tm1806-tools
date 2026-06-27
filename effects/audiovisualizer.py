@@ -78,7 +78,7 @@ if os.geteuid() != 0:
 # ── signal processing ─────────────────────────────────────────────
 
 class Goertzel:
-    def __init__(self, freq, sample_rate, window=64):
+    def __init__(self, freq, sample_rate, window=512):
         k = int(0.5 + freq * window / sample_rate)
         self.coeff = 2.0 * math.cos(2.0 * math.pi * k / window)
         self.window = window
