@@ -10,3 +10,14 @@ hotkey/config.toml
 # diagnostic output dirs
 rgbkb/logs/
 rgbkb/ec_snapshots/
+
+# kbuild artifacts (driver/)
+*.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+.*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
