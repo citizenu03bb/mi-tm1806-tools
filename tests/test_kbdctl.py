@@ -1,6 +1,5 @@
 import contextlib
 import io
-import os
 import subprocess
 import sys
 import tempfile
@@ -90,6 +89,43 @@ class KbdctlTest(unittest.TestCase):
                  contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(kbdctl.doctor(), 0)
             self.assertIn("[OK] modinfo mi_tm1806_led", out.getvalue())
+
+    def test_doctor_warns_for_systemd_bus_inaccessible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            led_prefix, wmi_dev = make_fake_sysfs(Path(tmp))
+
+            def fake_run(argv, timeout=3):
+                if argv[0] == "modinfo":
+                    return subprocess.CompletedProcess(argv, 0, "filename: /lib/modules/x/mi.ko\n", "")
+                if argv[0] == "dkms":
+                    return subprocess.CompletedProcess(argv, 0, "mi-tm1806-led/0.2, test: installed\n", "")
+                if argv[:2] == ["systemctl", "is-active"]:
+                    return subprocess.CompletedProcess(argv, 1, "", "Failed to connect to bus: Operation not permitted\n")
+                return subprocess.CompletedProcess(argv, 1, "", "")
+
+            with mock.patch.object(kbdctl, "LED_PREFIX", led_prefix), \
+                 mock.patch.object(kbdctl, "WMI_DEV", wmi_dev), \
+                 mock.patch.object(kbdctl, "_run", fake_run), \
+                 mock.patch.object(kbdctl.shutil, "which", return_value="/usr/bin/tool"), \
+                 mock.patch.object(kbdctl, "_read", side_effect=lambda p: "mi_tm1806_led 1 0 - Live 0\n" if p == Path("/proc/modules") else p.read_text().strip()), \
+                 contextlib.redirect_stdout(io.StringIO()) as out, \
+                 contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(kbdctl.doctor(), 0)
+            self.assertIn("systemd bus not accessible", out.getvalue())
+
+    def test_doctor_warns_on_panel_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            led_prefix, wmi_dev = make_fake_sysfs(Path(tmp))
+            (wmi_dev / "panel_brightness").write_text("5")
+            with mock.patch.object(kbdctl, "LED_PREFIX", led_prefix), \
+                 mock.patch.object(kbdctl, "WMI_DEV", wmi_dev), \
+                 mock.patch.object(kbdctl, "_run", return_value=subprocess.CompletedProcess([], 0, "filename: /lib/modules/x/mi.ko\n", "")), \
+                 mock.patch.object(kbdctl.shutil, "which", return_value=None), \
+                 mock.patch.object(kbdctl, "_read", side_effect=lambda p: "mi_tm1806_led 1 0 - Live 0\n" if p == Path("/proc/modules") else p.read_text().strip()), \
+                 contextlib.redirect_stdout(io.StringIO()) as out, \
+                 contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(kbdctl.doctor(), 0)
+            self.assertIn("panel_brightness=5", out.getvalue())
 
     def test_doctor_fails_when_sysfs_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

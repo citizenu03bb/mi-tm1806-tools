@@ -101,7 +101,7 @@ def current_colors() -> list[str]:
 
 @dataclass
 class Check:
-    ok: bool
+    status: str
     label: str
     detail: str = ""
 
@@ -133,9 +133,14 @@ def _is_readable(path: Path) -> bool:
 
 
 def _print_check(check: Check) -> None:
-    mark = "OK" if check.ok else "WARN"
     detail = f" - {check.detail}" if check.detail else ""
-    print(f"[{mark}] {check.label}{detail}")
+    print(f"[{check.status}] {check.label}{detail}")
+
+
+def _check(ok: bool, label: str, detail: str = "", warn: bool = False) -> Check:
+    if ok:
+        return Check("OK", label, detail)
+    return Check("WARN" if warn else "FAIL", label, detail)
 
 
 def doctor() -> int:
@@ -153,20 +158,20 @@ def doctor() -> int:
             detail += f"; vermagic={fields['vermagic']}"
         if fields.get("signer"):
             detail += f"; signer={fields['signer']}"
-        checks.append(Check(True, "modinfo mi_tm1806_led", detail))
+        checks.append(_check(True, "modinfo mi_tm1806_led", detail))
     else:
-        checks.append(Check(False, "modinfo mi_tm1806_led", "module is not installed in the module path"))
+        checks.append(_check(False, "modinfo mi_tm1806_led", "module is not installed in the module path", warn=True))
 
     modules = _read(Path("/proc/modules")) or ""
-    checks.append(Check("mi_tm1806_led " in modules, "module loaded", "use `sudo modprobe mi_tm1806_led`" if "mi_tm1806_led " not in modules else "loaded"))
+    checks.append(_check("mi_tm1806_led " in modules, "module loaded", "use `sudo modprobe mi_tm1806_led`" if "mi_tm1806_led " not in modules else "loaded", warn=True))
 
     if shutil.which("dkms"):
         dkms = _run(["dkms", "status", "mi-tm1806-led"])
         ok = bool(dkms and dkms.returncode == 0 and "installed" in dkms.stdout)
         detail = (dkms.stdout.strip() if dkms else "") or "not installed"
-        checks.append(Check(ok, "DKMS status", detail))
+        checks.append(_check(ok, "DKMS status", detail, warn=True))
     else:
-        checks.append(Check(False, "DKMS status", "dkms command not found"))
+        checks.append(_check(False, "DKMS status", "dkms command not found", warn=True))
 
     required_missing = False
     for zone in ZONES:
@@ -180,7 +185,8 @@ def doctor() -> int:
             if path.exists():
                 perm.append("readable" if _is_readable(path) else "not-readable")
                 perm.append("writable" if writable else "not-writable")
-            checks.append(Check(required_ok and writable, f"LED {zone}/{attr}", ", ".join(perm) if perm else "missing"))
+            status_ok = required_ok and writable
+            checks.append(_check(status_ok, f"LED {zone}/{attr}", ", ".join(perm) if perm else "missing", warn=required_ok))
 
     for attr in ("effect", "speed", "secondary_color", "panel_brightness", "commit"):
         path = WMI_DEV / attr
@@ -193,16 +199,27 @@ def doctor() -> int:
             val = _read(path)
             detail = f"value={val}" if val is not None else "missing"
             detail += "; writable" if writable else "; not-writable"
-        checks.append(Check(required_ok and writable, f"WMI {attr}", detail))
+        checks.append(_check(required_ok and writable, f"WMI {attr}", detail, warn=required_ok))
 
     kbbr = _read(WMI_DEV / "panel_brightness")
     if kbbr == "5":
-        checks.append(Check(False, "panel wake state", "panel_brightness=5; press Fn+keyboard-brightness once"))
+        checks.append(_check(False, "panel wake state", "panel_brightness=5; press Fn+keyboard-brightness once", warn=True))
 
     if shutil.which("systemctl"):
         svc = _run(["systemctl", "is-active", "mi-hotkey"])
-        active = bool(svc and svc.returncode == 0 and svc.stdout.strip() == "active")
-        checks.append(Check(active, "mi-hotkey service", "active" if active else "not active or not accessible"))
+        if svc is None:
+            detail = "systemctl unavailable"
+            active = False
+        elif svc.returncode == 0 and svc.stdout.strip() == "active":
+            detail = "active"
+            active = True
+        elif "Failed to connect to bus" in (svc.stderr or ""):
+            detail = "systemd bus not accessible in this context"
+            active = False
+        else:
+            detail = (svc.stdout or svc.stderr or "not active").strip()
+            active = False
+        checks.append(_check(active, "mi-hotkey service", detail, warn=True))
 
     for check in checks:
         _print_check(check)
@@ -210,6 +227,8 @@ def doctor() -> int:
     if required_missing:
         print("Next step: load the driver with `sudo modprobe mi_tm1806_led` and check DKMS/install docs.", file=sys.stderr)
         return 1
+    if any(c.status == "WARN" and "not-writable" in c.detail for c in checks):
+        print("Next step: install/reload the udev rule or run commands with sudo for write access.")
     return 0
 
 
