@@ -53,6 +53,16 @@ echo 1 | sudo tee /sys/bus/wmi/devices/E2A89D40-*/commit
 
 See [`driver/README.md`](driver/README.md) for full usage, DKMS setup, and design rationale.
 
+### Diagnostics
+
+Before filing an issue, run the kernel-driver diagnostic:
+
+```sh
+python3 ./effects/kbdctl.py doctor
+```
+
+It checks module installation/loading, DKMS status, LED/WMI sysfs nodes, permissions, current effect/speed/brightness state, and the hotkey service when available.
+
 ### Effects (`effects/`)
 
 High-level tools use the kernel driver's sysfs interface. Load the driver first.
@@ -82,6 +92,14 @@ sudo ./rgbkb/rgbkb status                # dump EC state
 ### Macro-key daemon (`hotkey/`)
 
 See [`hotkey/README.md`](hotkey/README.md) for setup.
+
+### Tests
+
+Non-hardware regression tests run on a generic Linux host:
+
+```sh
+python3 -m unittest discover
+```
 
 ## Known limitations
 

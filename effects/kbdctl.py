@@ -4,8 +4,19 @@
 from __future__ import annotations
 
 import sys
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 
-from mi_tm1806_sysfs import DriverUnavailable, LED_PREFIX, paint_frame, validate_driver
+from mi_tm1806_sysfs import (
+    DriverUnavailable,
+    LED_PREFIX,
+    WMI_DEV,
+    ZONES,
+    paint_frame,
+    validate_driver,
+)
 
 CLI_ZONES = {
     "bar": "bar",
@@ -37,7 +48,8 @@ def usage() -> int:
     print(
         "Usage: kbdctl.py {solid COLOR|breath COLOR [--speed N]|wave COLOR [--speed N]|"
         "colorful COLOR1 COLOR2 [--speed N]|zone ZONE COLOR|"
-        "frame C1 C2 C3 C4 [--effect NAME] [--secondary COLOR] [--speed N]}",
+        "frame C1 C2 C3 C4 [--effect NAME] [--secondary COLOR] [--speed N]|"
+        "doctor}",
         file=sys.stderr,
     )
     return 1
@@ -87,11 +99,129 @@ def current_colors() -> list[str]:
     return colors
 
 
+@dataclass
+class Check:
+    ok: bool
+    label: str
+    detail: str = ""
+
+
+def _run(argv: list[str], timeout: int = 3) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(argv, text=True, capture_output=True, timeout=timeout, check=False)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
+
+
+def _is_writable(path: Path) -> bool:
+    import os
+
+    return path.exists() and os.access(path, os.W_OK)
+
+
+def _is_readable(path: Path) -> bool:
+    import os
+
+    return path.exists() and os.access(path, os.R_OK)
+
+
+def _print_check(check: Check) -> None:
+    mark = "OK" if check.ok else "WARN"
+    detail = f" - {check.detail}" if check.detail else ""
+    print(f"[{mark}] {check.label}{detail}")
+
+
+def doctor() -> int:
+    checks: list[Check] = []
+
+    modinfo = _run(["modinfo", "mi_tm1806_led"])
+    if modinfo and modinfo.returncode == 0:
+        fields = {}
+        for line in modinfo.stdout.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                fields[k.strip()] = v.strip()
+        detail = fields.get("filename", "module found")
+        if fields.get("vermagic"):
+            detail += f"; vermagic={fields['vermagic']}"
+        if fields.get("signer"):
+            detail += f"; signer={fields['signer']}"
+        checks.append(Check(True, "modinfo mi_tm1806_led", detail))
+    else:
+        checks.append(Check(False, "modinfo mi_tm1806_led", "module is not installed in the module path"))
+
+    modules = _read(Path("/proc/modules")) or ""
+    checks.append(Check("mi_tm1806_led " in modules, "module loaded", "use `sudo modprobe mi_tm1806_led`" if "mi_tm1806_led " not in modules else "loaded"))
+
+    if shutil.which("dkms"):
+        dkms = _run(["dkms", "status", "mi-tm1806-led"])
+        ok = bool(dkms and dkms.returncode == 0 and "installed" in dkms.stdout)
+        detail = (dkms.stdout.strip() if dkms else "") or "not installed"
+        checks.append(Check(ok, "DKMS status", detail))
+    else:
+        checks.append(Check(False, "DKMS status", "dkms command not found"))
+
+    required_missing = False
+    for zone in ZONES:
+        zone_dir = LED_PREFIX / f"mi_tm1806::kbd_{zone}"
+        for attr in ("multi_intensity", "brightness"):
+            path = zone_dir / attr
+            required_ok = path.exists() and _is_readable(path)
+            writable = _is_writable(path)
+            required_missing = required_missing or not required_ok
+            perm = []
+            if path.exists():
+                perm.append("readable" if _is_readable(path) else "not-readable")
+                perm.append("writable" if writable else "not-writable")
+            checks.append(Check(required_ok and writable, f"LED {zone}/{attr}", ", ".join(perm) if perm else "missing"))
+
+    for attr in ("effect", "speed", "secondary_color", "panel_brightness", "commit"):
+        path = WMI_DEV / attr
+        required_ok = path.exists() and (attr == "commit" or _is_readable(path))
+        writable = _is_writable(path)
+        required_missing = required_missing or not required_ok
+        if attr == "commit":
+            detail = "writable" if writable else ("not-writable" if path.exists() else "missing")
+        else:
+            val = _read(path)
+            detail = f"value={val}" if val is not None else "missing"
+            detail += "; writable" if writable else "; not-writable"
+        checks.append(Check(required_ok and writable, f"WMI {attr}", detail))
+
+    kbbr = _read(WMI_DEV / "panel_brightness")
+    if kbbr == "5":
+        checks.append(Check(False, "panel wake state", "panel_brightness=5; press Fn+keyboard-brightness once"))
+
+    if shutil.which("systemctl"):
+        svc = _run(["systemctl", "is-active", "mi-hotkey"])
+        active = bool(svc and svc.returncode == 0 and svc.stdout.strip() == "active")
+        checks.append(Check(active, "mi-hotkey service", "active" if active else "not active or not accessible"))
+
+    for check in checks:
+        _print_check(check)
+
+    if required_missing:
+        print("Next step: load the driver with `sudo modprobe mi_tm1806_led` and check DKMS/install docs.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         return usage()
     cmd, args = argv[0], argv[1:]
     try:
+        if cmd == "doctor":
+            if args:
+                return usage()
+            return doctor()
         args, speed = parse_speed(args)
         if cmd in ("solid", "static"):
             if len(args) != 1:

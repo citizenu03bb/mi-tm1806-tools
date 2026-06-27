@@ -7,6 +7,9 @@ These tools use the `mi-tm1806-led` kernel driver's sysfs store-and-commit inter
 ## Quick start
 
 ```sh
+# Diagnose driver/sysfs setup
+python3 ./effects/kbdctl.py doctor
+
 # Built-in effects (Ctrl+C to stop, restores green)
 sudo ./effects/rgbkb-effects rainbow    # spectrum cycle
 sudo ./effects/rgbkb-effects police     # red/blue alternating zones
