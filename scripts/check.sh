@@ -13,6 +13,16 @@ python3 -m py_compile \
   tests/test_sysfs_backend.py \
   tests/test_hotkey_events.py
 
+if command -v ruff &> /dev/null; then
+  echo "[check] Running ruff check..."
+  ruff check effects/ hotkey/ tests/
+elif command -v flake8 &> /dev/null; then
+  echo "[check] Running flake8..."
+  flake8 effects/ hotkey/ tests/
+else
+  echo "[WARN] No python linter (ruff or flake8) found; skipping style checks."
+fi
+
 python3 -m unittest discover
 
 bash -n \

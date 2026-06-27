@@ -89,6 +89,28 @@ sudo depmod -a
 
 To remove: `sudo rmmod mi_tm1806_led`.
 
+### Secure Boot Module Signing
+If you have Secure Boot enabled, loading the unsigned `mi-tm1806-led.ko` module will fail with a `Required key not available` (or `Permission denied`) error. To load it, you must sign it with a key trusted by the system:
+
+1. **Generate a MOK (Machine Owner Key) pair**:
+   ```sh
+   openssl req -new -x509 -newkey rsa:2048 -keyout MOK.key -out MOK.der -nodes -days 36500 -subj "/CN=TIMI TM1806 Driver Owner/"
+   ```
+2. **Import the public key into the system MOK list**:
+   ```sh
+   sudo mokutil --import MOK.der
+   ```
+   *Note: This will prompt you to set a temporary password. Reboot the laptop; the BIOS/Shim MOK manager screen will appear. Select **Enroll MOK**, confirm, and enter the password you set.*
+3. **Sign the module**:
+   ```sh
+   sudo /lib/modules/$(uname -r)/build/scripts/sign-file sha256 ./MOK.key ./MOK.der mi-tm1806-led.ko
+   ```
+4. **Load the module**:
+   ```sh
+   sudo insmod mi-tm1806-led.ko
+   ```
+   *(DKMS can also be configured to sign modules automatically by referencing `/etc/dkms/framework.conf` or setting `sign_tool` / `mok_signing_key` options, depending on your Linux distribution's DKMS configuration.)*
+
 ### DKMS (rebuild on kernel updates)
 
 A manual `make modules_install` puts the module under `/lib/modules/$(uname -r)/updates/`. That works for the running kernel but does not follow you to a new kernel after an update — you would have to rebuild and reinstall. DKMS handles this automatically.
