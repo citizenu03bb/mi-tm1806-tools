@@ -15,6 +15,12 @@ sudo ./effects/rgbkb-effects fire       # warm amber flicker
 sudo ./effects/rgbkb-effects wave       # wave with cycling colour
 sudo ./effects/rgbkb-effects all        # cycle through all 7
 
+# Audio visualizer (keyboard reacts to system audio)
+sudo ./effects/audiovisualizer.py pulse  # uniform colour pulses to beat
+sudo ./effects/audiovisualizer.py bands  # bass→bar, mids→mid, treble→right
+sudo ./effects/audiovisualizer.py disco  # colour shifts with the music
+sudo ./effects/audiovisualizer.py fire   # warm glow intensifies with volume
+
 # Custom presets (created in the editor)
 sudo ./effects/rgbkb-effects preset my-effect
 ```

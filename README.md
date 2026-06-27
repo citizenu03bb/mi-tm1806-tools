@@ -76,7 +76,10 @@ Flashy presets and a visual composer:
 sudo ./effects/rgbkb-effects rainbow   # spectrum cycle
 sudo ./effects/rgbkb-effects police    # red/blue alternating zones
 sudo ./effects/rgbkb-effects disco     # random colours + modes
-sudo ./effects/rgbkb-effects all       # cycle through all 7 effects
+sudo ./effects/rgbkb-effects all       # cycle through all 7
+
+# Audio visualizer (keyboard reacts to system audio output)
+sudo ./effects/audiovisualizer.py pulse  # uniform colour pulses to the beat effects
 
 # Custom presets
 sudo ./effects/rgbkb-effects preset my-effect
